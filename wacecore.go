@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	cf "github.com/tiroa-tilsor/wacelib/configstore"
+	cf "github.com/tilsor/ModSecIntl_wace_lib/configstore"
 
-	pm "github.com/tiroa-tilsor/wacelib/pluginmanager"
+	pm "github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
 
 	lg "github.com/tilsor/ModSecIntl_logging/logging"
 

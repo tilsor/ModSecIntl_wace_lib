@@ -1,4 +1,4 @@
-module github.com/tiroa-tilsor/wacelib
+module github.com/tilsor/ModSecIntl_wace_lib
 
 go 1.22.9
 

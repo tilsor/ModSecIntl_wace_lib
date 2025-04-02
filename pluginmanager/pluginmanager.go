@@ -10,7 +10,7 @@ import (
 	"plugin"
 	"sync"
 
-	cf "github.com/tiroa-tilsor/wacelib/configstore"
+	cf "github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/nats-io/nats.go"

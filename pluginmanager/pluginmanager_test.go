@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"time"
 
-	cf "github.com/tiroa-tilsor/wacelib/configstore"
+	cf "github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"gopkg.in/yaml.v3"
 
