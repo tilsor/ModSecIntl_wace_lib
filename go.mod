@@ -4,7 +4,7 @@ go 1.22.9
 
 require (
 	github.com/nats-io/nats.go v1.38.0
-	github.com/tilsor/ModSecIntl_logging v1.0.0
+	github.com/tilsor/ModSecIntl_logging v1.0.1
 	go.opentelemetry.io/otel v1.34.0
 	go.opentelemetry.io/otel/metric v1.34.0
 	go.opentelemetry.io/otel/sdk/metric v1.34.0
