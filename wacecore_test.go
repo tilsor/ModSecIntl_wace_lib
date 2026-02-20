@@ -47,7 +47,7 @@ logpath: "/dev/null"
 loglevel: DEBUG
 modelplugins:
   - id: "trivial"
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 1
     params:
       d: "sds"
@@ -56,7 +56,7 @@ modelplugins:
     # plugintype: "RequestHeaders"
     plugintype: "Everything"
   - id: "trivial2"
-    path: "_plugins/model/trivial2.so"
+    path: "testdata/plugins/model/trivial2.so"
     weight: 2
     params:
       a: "sdsds"
@@ -65,7 +65,7 @@ modelplugins:
     plugintype: "Everything"
 decisionplugins:
   - id: "simple"
-    path: "_plugins/decision/simple.so"
+    path: "testdata/plugins/decision/simple.so"
     wafweight: 0.5
     decisionbalance: 0.5
 `)
@@ -79,39 +79,39 @@ loglevel: "WARN"
 modelplugins:
   - id: "trivialRequestHeaders"
     plugintype: RequestHeaders
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 0.1
     mode: sync
   - id: "trivialRequestBody"
     plugintype: RequestBody
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 0.1
     mode: sync
   - id: "trivialAllRequest"
     plugintype: AllRequest
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 0.1
     mode: sync
   - id: "trivialResponseHeaders"
     plugintype: ResponseHeaders
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 0.1
     mode: sync
   - id: "trivialResponseBody"
     plugintype: ResponseBody
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 0.1
     mode: sync
   - id: "trivialAllResponse"
     plugintype: AllResponse
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 0.1
     mode: sync
 
 #The decision plugin configuration
 decisionplugins:
   - id: "simple"
-    path: "_plugins/decision/simple.so"
+    path: "testdata/plugins/decision/simple.so"
 #    wafweight: 0.5
     decisionbalance: 0.1
 `)
@@ -125,19 +125,19 @@ loglevel: "WARN"
 modelplugins:
   - id: "trivial"
     plugintype: RequestHeaders
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 1
     mode: sync
   - id: "trivial2"
     plugintype: RequestHeaders
-    path: "_plugins/model/trivial2.so"
+    path: "testdata/plugins/model/trivial2.so"
     weight: 2
     mode: sync
 
 #The decision plugin configuration
 decisionplugins:
   - id: "simple"
-    path: "_plugins/decision/simple.so"
+    path: "testdata/plugins/decision/simple.so"
 #    wafweight: 0.5
     decisionbalance: 0.1
 `)
@@ -151,20 +151,20 @@ loglevel: "WARN"
 modelplugins:
   - id: "trivial"
     plugintype: RequestHeaders
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 1
     mode: sync
     remote: true
   - id: "trivial2"
     plugintype: RequestHeaders
-    path: "_plugins/model/trivial2.so"
+    path: "testdata/plugins/model/trivial2.so"
     weight: 2
     mode: sync
     remote: true
 #The decision plugin configuration
 decisionplugins:
   - id: "simple"
-    path: "_plugins/decision/simple.so"
+    path: "testdata/plugins/decision/simple.so"
 #    wafweight: 0.5
     decisionbalance: 0.1
 `)
@@ -178,18 +178,18 @@ loglevel: "WARN"
 modelplugins:
   - id: "trivial"
     plugintype: RequestHeaders
-    path: "_plugins/model/trivial.so"
+    path: "testdata/plugins/model/trivial.so"
     weight: 1
     mode: async
   - id: "trivial2"
     plugintype: RequestHeaders
-    path: "_plugins/model/trivial2.so"
+    path: "testdata/plugins/model/trivial2.so"
     weight: 2
     mode: async
 #The decision plugin configuration
 decisionplugins:
   - id: "simple"
-    path: "_plugins/decision/simple.so"
+    path: "testdata/plugins/decision/simple.so"
 #    wafweight: 0.5
     decisionbalance: 0.1
 `)
@@ -200,7 +200,7 @@ decisionplugins:
 // listenport: "50051"
 // modelplugins:
 //   - id: "trivial"
-//     path: "_plugins/model/trivial.so"
+//     path: "testdata/plugins/model/trivial.so"
 //     weight: 1
 //     threshold: 0.5
 //     params:
@@ -210,7 +210,7 @@ decisionplugins:
 //     # plugintype: "RequestHeaders"
 //     plugintype: "Everything"
 //   - id: "trivial2"
-//     path: "_plugins/model/trivial2.so"
+//     path: "testdata/plugins/model/trivial2.so"
 //     weight: 2
 //     threshold: 0.1
 //     params:
@@ -219,7 +219,7 @@ decisionplugins:
 //       c: "kfoskdofnno"
 //     plugintype: "Everything"
 //   - id: "roberta"
-//     path: "_plugins/model/roberta.so"
+//     path: "testdata/plugins/model/roberta.so"
 //     weight: 1
 //     threshold: 0.5
 //     params:
@@ -228,7 +228,7 @@ decisionplugins:
 //     plugintype: "AllRequest"
 // decisionplugins:
 //   - id: "simple"
-//     path: "_plugins/decision/simple.so"
+//     path: "testdata/plugins/decision/simple.so"
 //     wafweight: 0.5
 //     decisionbalance: 0.5
 // `)

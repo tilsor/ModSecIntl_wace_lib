@@ -13,7 +13,7 @@ logpath: "/dev/stderr"
 loglevel: "DEBUG"
 modelplugins:
   - id: "trivial"
-    path: "../_plugins/model/trivial.so"
+    path: "../testdata/plugins/model/trivial.so"
     weight: 1
     threshold: 0.5
     params:
@@ -23,7 +23,7 @@ modelplugins:
     plugintype: "RequestHeaders"
     mode: "sync"
   - id: "trivial2"
-    path: "../_plugins/model/trivial2.so"
+    path: "../testdata/plugins/model/trivial2.so"
     weight: 2
     threshold: 0.1
     params:
@@ -33,7 +33,7 @@ modelplugins:
     plugintype: "RequestHeaders"
 decisionplugins:
   - id: "test"
-    path: "../_plugins/decision/test.so"
+    path: "../testdata/plugins/decision/test.so"
     wafweight: 0.5
     decisionbalance: 0.5
     params:
@@ -108,7 +108,7 @@ loglevel: ERROR
 logpath: /dev/null
 modelplugins:
   - id: "testplugin"
-    path: "../_plugins/model/trivial.so"
+    path: "../testdata/plugins/model/trivial.so"
     plugintype: InvalidPluginType
 `))
 	if err == nil {
@@ -120,7 +120,7 @@ loglevel: ERROR
 logpath: /dev/null
 modelplugins:
   - id: "testplugin"
-    path: "../_plugins/model/trivial.so"
+    path: "../testdata/plugins/model/trivial.so"
     plugintype: ""
 `))
 	if err == nil {
@@ -132,7 +132,7 @@ loglevel: ERROR
 logpath: /dev/null
 modelplugins:
   - id: "testplugin"
-    path: "../_plugins/model/nonexistent.so"
+    path: "../testdata/plugins/model/nonexistent.so"
     plugintype: "RequestHeaders"
 `))
 	if err == nil {
@@ -167,7 +167,7 @@ loglevel: ERROR
 logpath: /dev/null
 decisionplugins:
   - id: "testplugin"
-    path: "../_plugins/decision/nonexistent.so"
+    path: "../testdata/plugins/decision/nonexistent.so"
 `))
 	if err == nil {
 		t.Errorf("nonexistent decision plugin path does not return error")
@@ -189,7 +189,7 @@ loglevel: ERROR
 logpath: /dev/null
 modelplugins:
   - id: "testplugin"
-    path: "../_plugins/model/trivial.so"
+    path: "../testdata/plugins/model/trivial.so"
     plugintype: "` + v + `"
 `
 		err = initialize([]byte(config))

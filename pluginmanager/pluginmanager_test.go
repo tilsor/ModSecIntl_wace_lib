@@ -17,7 +17,7 @@ loglevel: "WARN"
 `
 
 var trivialPlugin = `  - id: "trivial"
-    path: "../_plugins/model/trivial.so"
+    path: "../testdata/plugins/model/trivial.so"
     weight: 1
     params:
       param1: "first value"
@@ -28,7 +28,7 @@ var trivialPlugin = `  - id: "trivial"
 `
 
 var testPlugin = `  - id: "test"
-    path: "../_plugins/decision/test.so"
+    path: "../testdata/plugins/decision/test.so"
     wafweight: 0.5
     decisionbalance: 0.5
     params:
@@ -84,19 +84,19 @@ func init() {
 // func TestPluginInit(t *testing.T) {
 // 	cases := []struct{ id, conf string }{
 // 		// 		{"invalid_path", `  - id: "invalid_path"
-// 		//     path: "../_plugins/model/nonexistent.so"
+// 		//     path: "../testdata/plugins/model/nonexistent.so"
 // 		//     plugintype: "AllRequest"
 // 		// `},
 // 		{"no_init", `  - id: "no_init"
-//     path: "../_plugins/model/no_init.so"
+//     path: "../testdata/plugins/model/no_init.so"
 //     plugintype: "AllRequest"
 // `},
 // 		{"wrong_init", `  - id: "wrong_init"
-//     path: "../_plugins/model/wrong_init.so"
+//     path: "../testdata/plugins/model/wrong_init.so"
 //     plugintype: "AllRequest"
 // `},
 // 		{"error_init", `  - id: "error_init"
-//     path: "../_plugins/model/error_init.so"
+//     path: "../testdata/plugins/model/error_init.so"
 //     plugintype: "AllRequest"
 // `},
 // 	}
@@ -223,7 +223,7 @@ func init() {
 // 	for _, c := range cases {
 // 		config := baseConfig + "modelplugins:\n" +
 // 			"  - id: \"" + c.id + "\"\n" +
-// 			"    path: \"../_plugins/model/trivial.so\"\n" +
+// 			"    path: \"../testdata/plugins/model/trivial.so\"\n" +
 // 			"    plugintype: \"" + c.pluginType.String() + "\"\n"
 
 // 		err := initilize([]byte(config))
@@ -267,15 +267,15 @@ func init() {
 // func TestProcessRequestInvalid(t *testing.T) {
 // 	cases := []struct{ id, conf string }{
 // 		{"no_req", `  - id: "no_req"
-//     path: "../_plugins/model/no_req.so"
+//     path: "../testdata/plugins/model/no_req.so"
 //     plugintype: "Everything"
 // `},
 // 		{"wrong_req", `  - id: "wrong_req"
-//     path: "../_plugins/model/wrong_req.so"
+//     path: "../testdata/plugins/model/wrong_req.so"
 //     plugintype: "Everything"
 // `},
 // 		{"error_req", `  - id: "error_req"
-//     path: "../_plugins/model/error_req.so"
+//     path: "../testdata/plugins/model/error_req.so"
 //     plugintype: "Everything"
 // `},
 // 	}
@@ -326,13 +326,13 @@ func init() {
 // func TestCheckResultInvalid(t *testing.T) {
 // 	cases := []struct{ id, conf string }{
 // 		{"no_check", `  - id: "no_check"
-//     path: "../_plugins/decision/no_check.so"
+//     path: "../testdata/plugins/decision/no_check.so"
 // `},
 // 		{"wrong_check", `  - id: "wrong_check"
-//     path: "../_plugins/decision/wrong_check.so"
+//     path: "../testdata/plugins/decision/wrong_check.so"
 // `},
 // 		{"error_check", `  - id: "error_check"
-//     path: "../_plugins/decision/error_check.so"
+//     path: "../testdata/plugins/decision/error_check.so"
 // `},
 // 	}
 
