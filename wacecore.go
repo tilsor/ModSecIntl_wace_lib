@@ -5,7 +5,6 @@ package wace
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,7 +61,7 @@ func addTransactionAnalysis(transactionID string) {
 // callPlugins calls the model plugins in the given list, with the given input.
 // It waits for all the synchronous model plugins to finish, and sends the
 // result to the client. The asynchronous model plugins are executed in parallel
-func callPlugins(input string, models []string, t cf.ModelPluginType, transactionId string) {
+func callPlugins(input string, models []string, t cf.ModelPluginType, transactionId string) error {
 	logger := lg.Get()
 
 	// channel to receive the status of the execution of the analysis
@@ -73,7 +72,10 @@ func callPlugins(input string, models []string, t cf.ModelPluginType, transactio
 	plugins.AddModelChannel(transactionId, t, asyncModelPlugStatus, "async")
 	plugins.AddModelChannel(transactionId, t, modelPlugStatus, "sync")
 
-	conf := cf.Get()
+	conf, err := cf.Get()
+	if err != nil {
+		return err
+	}
 
 	syncCounter := 0
 	asyncCounter := 0
@@ -154,10 +156,11 @@ func callPlugins(input string, models []string, t cf.ModelPluginType, transactio
 	value, ok := analysisMap.Load(transactionId)
 	if !ok {
 		logger.TPrintf(lg.ERROR, transactionId, "core | could not find transaction %s in analysis map", transactionId)
-		return
+		return fmt.Errorf("core | could not find transaction %s in analysis map", transactionId)
 	}
 	analysisChan := value.(*transactionSync).Channel
 	analysisChan <- "done"
+	return nil
 }
 
 // InitTransaction initializes a transaction with the given id
@@ -191,40 +194,40 @@ func Analyze(modelsTypeAsString, transactionId, payload string, models []string)
 
 // CheckTransaction checks the result of the analysis of the transaction
 // with the given id and decision plugin
-func CheckTransaction(transactionID, decisionPlugin string, wafParams map[string]string) (bool, error) {
+func CheckTransaction(transactionId, decisionPlugin string, wafParams map[string]string) (bool, error) {
 	logger := lg.Get()
-	logger.TPrintf(lg.DEBUG, transactionID, "core | checking transaction")
+	logger.TPrintf(lg.DEBUG, transactionId, "core | checking transaction")
 
-	value, exists := analysisMap.Load(transactionID)
+	value, exists := analysisMap.Load(transactionId)
 
 	if !exists {
-		return false, fmt.Errorf("transaction with id %s does not exist", transactionID)
+		return false, fmt.Errorf("transaction with id %s does not exist", transactionId)
 	}
 
 	sync := value.(*transactionSync)
 
-	logger.TPrintln(lg.DEBUG, transactionID, "core | waiting for all models to finish...")
+	logger.TPrintln(lg.DEBUG, transactionId, "core | waiting for all models to finish...")
 
 	for i := 0; i < int(sync.Counter); i++ {
 		<-sync.Channel
 	}
 	sync.Counter = 0
 
-	logger.TPrintln(lg.DEBUG, transactionID, "core | done, checking data...")
-	res, err := plugins.CheckResult(transactionID, decisionPlugin, wafParams)
+	logger.TPrintln(lg.DEBUG, transactionId, "core | done, checking data...")
+	res, err := plugins.CheckResult(transactionId, decisionPlugin, wafParams)
 
 	if err == nil {
-		logger.TPrintf(lg.DEBUG, transactionID, "core | transaction checked successfully. Blocking transaction: %t", res)
+		logger.TPrintf(lg.DEBUG, transactionId, "core | transaction checked successfully. Blocking transaction: %t", res)
 
 		if res {
 			metric, err := meter.Int64Counter("wace.client.request.blocked.total", metric.WithDescription(decisionPlugin))
 			if err != nil {
-				logger.TPrintf(lg.WARN, transactionID, "core | failed to record blocked request metric: %v", err.Error())
+				logger.TPrintf(lg.WARN, transactionId, "core | failed to record blocked request metric: %v", err.Error())
 			}
 			metric.Add(ctx, 1)
 		}
 	} else {
-		logger.TPrintf(lg.ERROR, transactionID, "core | could not check transaction: %v", err)
+		logger.TPrintf(lg.ERROR, transactionId, "core | could not check transaction: %v", err)
 	}
 	return res, err
 }
@@ -235,31 +238,36 @@ func CloseTransaction(transactionID string) {
 	plugins.CloseTransaction(transactionID)
 	value, ok := analysisMap.Load(transactionID)
 	logger := lg.Get()
-	
+
 	if !ok {
 		logger.TPrintf(lg.ERROR, transactionID, "Analysis for transaction %s not found", transactionID)
 	} else {
 		close(value.(*transactionSync).Channel)
-		for range value.(*transactionSync).Channel {}
+		for range value.(*transactionSync).Channel {
+		}
 		analysisMap.Delete(transactionID)
 	}
 }
 
 // Init initializes the WACE core with the given metric meter
-func Init(met metric.Meter) {
+func Init(met metric.Meter) error {
 	logger := lg.Get()
-	conf := cf.Get()
+	conf, err := cf.Get()
 	meter = met
 
-	err := logger.LoadLogger(conf.LogPath, conf.LogLevel)
+	err = logger.LoadLogger(conf.LogPath, conf.LogLevel)
 	if err != nil {
 		logger.Printf(lg.ERROR, "ERROR: could not open wace log file: %v", err)
-		os.Exit(1)
-
+		return err
 	}
 	logger.Printf(lg.DEBUG, "Writing logs to %s from now", conf.LogPath)
 
 	logger.Println(lg.DEBUG, "Loading plugin manager...")
-	plugins = pm.New(met)
+	plugins, err = pm.New(met)
+	if err != nil {
+		return err
+	}
 	logger.Println(lg.DEBUG, "Plugin manager loaded")
+
+	return nil
 }

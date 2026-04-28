@@ -76,8 +76,8 @@ type modelPluginConfig struct {
 	Threshold  float64
 	Params     map[string]string
 	PluginType ModelPluginType
-	Mode 	   string
-	Remote	   bool
+	Mode       string
+	Remote     bool
 }
 
 // DecisionPluginConfig stores the configuration of a decision plugin
@@ -95,18 +95,32 @@ type ConfigStore struct {
 	DecisionPlugins map[string]decisionPluginConfig
 	LogPath         string
 	LogLevel        lg.LogLevel
-	NatsURL		 	string
-	ApplicationId	string
+	NatsURL         string
+	ApplicationId   string
 }
 
 var config *ConfigStore
 
-// Get returns or creates the unique instance of configstore
-func Get() *ConfigStore {
-	if config == nil {
-		config = new(ConfigStore)
+// Create and returns the unique instance of configstore if it does not exist previously, in other case returns error
+func New() (*ConfigStore, error) {
+	if config != nil {
+		return nil, fmt.Errorf("ConfigStore already exists")
 	}
-	return config
+	config = new(ConfigStore)
+	return config, nil
+}
+
+// Get returns the unique instance of configstore
+func Get() (*ConfigStore, error) {
+	if config == nil {
+		return nil, fmt.Errorf("Configuration was not loaded")
+	}
+	return config, nil
+}
+
+// Clean remove the references to the stored instance of configstore
+func Clean() {
+	config = nil
 }
 
 type configFileModelPlugin struct {
@@ -116,8 +130,8 @@ type configFileModelPlugin struct {
 	Threshold  float64
 	Params     map[string]string
 	PluginType string `yaml:"plugintype"`
-	Mode 	   string
-	Remote	   bool
+	Mode       string
+	Remote     bool
 }
 
 type configFileDecisionPlugin struct {
@@ -133,7 +147,7 @@ type ConfigFileData struct {
 	Loglevel        string
 	Modelplugins    []configFileModelPlugin
 	Decisionplugins []configFileDecisionPlugin
-	NatsURL			string
+	NatsURL         string
 }
 
 // IsAsync returns true if the model plugin is async
@@ -243,6 +257,6 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 	} else {
 		cs.NatsURL = "localhost:4222"
 	}
-	
+
 	return nil
 }

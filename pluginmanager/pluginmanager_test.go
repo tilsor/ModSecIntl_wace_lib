@@ -56,14 +56,17 @@ func initilize(configuration []byte) error {
 	if err != nil {
 		return err
 	}
-	err = cf.Get().SetConfig(aux)
+	cs, err := cf.Get()
+	if err != nil {
+		return err
+	}
+	err = cs.SetConfig(aux)
 	if err != nil {
 		return err
 	}
 	logger := lg.Get()
 
-	conf := cf.Get()
-	err = logger.LoadLogger(conf.LogPath, conf.LogLevel)
+	err = logger.LoadLogger(cs.LogPath, cs.LogLevel)
 	if err != nil {
 		return err
 

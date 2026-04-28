@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	cf "github.com/tilsor/ModSecIntl_wace_lib/configstore"
+	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"go.opentelemetry.io/otel/sdk/metric"
 
 	"gopkg.in/yaml.v3"
@@ -237,16 +237,23 @@ var provider = metric.NewMeterProvider()
 var testMeter = provider.Meter("example-meter")
 
 func initilize(configuration []byte) error {
-	var aux cf.ConfigFileData
+	var aux configstore.ConfigFileData
 	err := yaml.Unmarshal(configuration, &aux)
 	if err != nil {
 		return err
 	}
-	err = cf.Get().SetConfig(aux)
+	cs, err := configstore.Get()
 	if err != nil {
 		return err
 	}
-	Init(testMeter)
+	err = cs.SetConfig(aux)
+	if err != nil {
+		return err
+	}
+	err = Init(testMeter)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -261,7 +268,13 @@ func generateRandomID() string {
 }
 
 func TestAnalyzeRequestInParts(t *testing.T) {
-	err := initilize(configAllModels)
+	_, err := configstore.New()
+	if err != nil {
+		t.Error(err)
+	}
+
+	defer configstore.Clean()
+	err = initilize(configAllModels)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -288,7 +301,13 @@ func TestAnalyzeRequestInParts(t *testing.T) {
 }
 
 func TestAnalyzeWholeRequest(t *testing.T) {
-	err := initilize(configAllModels)
+	_, err := configstore.New()
+	if err != nil {
+		t.Error(err)
+	}
+
+	defer configstore.Clean()
+	err = initilize(configAllModels)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -311,7 +330,13 @@ func TestAnalyzeWholeRequest(t *testing.T) {
 }
 
 func TestAnalyzeResponseInParts(t *testing.T) {
-	err := initilize(configAllModels)
+	_, err := configstore.New()
+	if err != nil {
+		t.Error(err)
+	}
+
+	defer configstore.Clean()
+	err = initilize(configAllModels)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -338,7 +363,13 @@ func TestAnalyzeResponseInParts(t *testing.T) {
 }
 
 func TestAnalyzeWholeResponse(t *testing.T) {
-	err := initilize(configAllModels)
+	_, err := configstore.New()
+	if err != nil {
+		t.Error(err)
+	}
+
+	defer configstore.Clean()
+	err = initilize(configAllModels)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -361,13 +392,16 @@ func TestAnalyzeWholeResponse(t *testing.T) {
 }
 
 func TestAnalyzeRequestInPartsAsync(t *testing.T) {
-	var aux cf.ConfigFileData
-	err := yaml.Unmarshal(configAsync, &aux)
+	_, err := configstore.New()
+	if err != nil {
+		t.Error(err)
+	}
+
+	defer configstore.Clean()
+	err = initilize(configAsync)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
-	err = cf.Get().SetConfig(aux)
-	Init(testMeter)
 	transactionID := generateRandomID()
 
 	InitTransaction(transactionID)
@@ -395,13 +429,16 @@ func TestCheckInvalidTransaction(t *testing.T) {
 }
 
 func TestCheckAttackTransaction(t *testing.T) {
-	var aux cf.ConfigFileData
-	err := yaml.Unmarshal(configSyncNoRemote, &aux)
+	_, err := configstore.New()
+	if err != nil {
+		t.Error(err)
+	}
+
+	defer configstore.Clean()
+	err = initilize(configSyncNoRemote)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
-	err = cf.Get().SetConfig(aux)
-	Init(testMeter)
 	transactionID := generateRandomID()
 
 	InitTransaction(transactionID)
@@ -476,13 +513,16 @@ func TestCheckAttackTransaction(t *testing.T) {
 
 func BenchmarkTrivial(b *testing.B) {
 
-	var aux cf.ConfigFileData
-	err := yaml.Unmarshal(configSyncNoRemote, &aux)
+	_, err := configstore.New()
+	if err != nil {
+		b.Error(err)
+	}
+
+	defer configstore.Clean()
+	err = initilize(configSyncNoRemote)
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)
 	}
-	err = cf.Get().SetConfig(aux)
-	Init(testMeter)
 	wafParams := make(map[string]string)
 	auxString := "COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2"
 	for _, score := range strings.Split(auxString, ",") {
@@ -504,13 +544,16 @@ func BenchmarkTrivial(b *testing.B) {
 }
 
 func BenchmarkTrivialFullNATS(b *testing.B) {
-	var aux cf.ConfigFileData
-	err := yaml.Unmarshal(configSyncRemote, &aux)
+	_, err := configstore.New()
+	if err != nil {
+		b.Error(err)
+	}
+
+	defer configstore.Clean()
+	err = initilize(configSyncRemote)
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)
 	}
-	err = cf.Get().SetConfig(aux)
-	Init(testMeter)
 	time.Sleep(2 * time.Millisecond)
 	wafParams := make(map[string]string)
 	auxString := "COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2"

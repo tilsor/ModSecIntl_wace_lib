@@ -78,9 +78,12 @@ type PluginManager struct {
 }
 
 // New creates a new PluginManager instance.
-func New(meter metric.Meter) *PluginManager {
+func New(meter metric.Meter) (*PluginManager, error) {
 	pm := new(PluginManager)
-	conf := cf.Get()
+	conf, err := cf.Get()
+	if err != nil {
+		return nil, err
+	}
 	logger := lg.Get()
 	logger.Printf(lg.DEBUG, "Connecting to NATS server at %s", conf.NatsURL)
 
@@ -187,7 +190,7 @@ func New(meter metric.Meter) *PluginManager {
 		decisionPluginLoaded := decisionPlugin{tp}
 		pm.decisionPlugins[data.ID] = decisionPluginLoaded
 	}
-	return pm
+	return pm, nil
 }
 
 // InitTransaction initializes the transaction with the given ID
@@ -205,8 +208,9 @@ func (p *PluginManager) CloseTransaction(transactionId string) {
 	} else {
 		transactionMap.(*sync.Map).Range(func(key, value interface{}) bool {
 			ch := value.(chan ModelStatus)
-            close(ch)
-            for range ch {}
+			close(ch)
+			for range ch {
+			}
 			transactionMap.(*sync.Map).Delete(key)
 			return true
 		})
@@ -241,13 +245,14 @@ func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t cf.Model
 	typeModel, ok := p.asyncModelsChannels.Load(transactionId)
 	if ok {
 		channelMap := typeModel.(*sync.Map)
-        ch, channelOk := channelMap.Load(t.String())
+		ch, channelOk := channelMap.Load(t.String())
 
-        if channelOk {
+		if channelOk {
 			close(ch.(chan ModelStatus))
-			for range ch.(chan ModelStatus) {}
-            channelMap.Delete(t.String())
-        }
+			for range ch.(chan ModelStatus) {
+			}
+			channelMap.Delete(t.String())
+		}
 
 		remainChannels := 0
 		typeModel.(*sync.Map).Range(func(key, value interface{}) bool {
@@ -280,44 +285,48 @@ func (p *PluginManager) AddToQueue(modelId, transactionId, payload string) error
 }
 
 // Process is in charge of calling the model plugin with id modelID
-func (p *PluginManager) Process(modelID, transactionId, payload string, t cf.ModelPluginType, modelPlugStatus chan ModelStatus) {
-	conf := cf.Get()
+func (p *PluginManager) Process(modelID, transactionId, payload string, t cf.ModelPluginType, modelPlugStatus chan ModelStatus) error {
+	conf, err := cf.Get()
+	if err != nil {
+		return err
+	}
 
 	mp, exists := p.modelPlugins[modelID]
 	if !exists {
 		modelPlugStatus <- ModelStatus{ModelID: modelID, Err: fmt.Errorf("model plugin not found")}
-		return
+		return nil
 	}
 
 	// check if the plugin is capable of analyzing the indicated part of the transaction
 	if mp.pluginType != t {
 		modelPlugStatus <- ModelStatus{ModelID: modelID,
 			Err: fmt.Errorf("plugin type %v cannot process a request with incompatible type %v", mp.pluginType, t)}
-		return
+		return nil
 	}
 
 	process := p.modelProcessFunc[modelID]
 
 	if conf.ModelPlugins[modelID].Mode == "async" {
 		modelPlugStatus <- ModelStatus{ModelID: modelID, Err: fmt.Errorf("model plugin is async")}
-		return
+		return nil
 	} else {
 		res, err := process(ModelInput{TransactionId: transactionId, Payload: payload})
 		// res, err := process(transactionId, payload)
 
 		if err != nil {
 			modelPlugStatus <- ModelStatus{ModelID: modelID, Err: err}
-			return
+			return nil
 		}
 		// store the results
 		resultSyncMap, ok := p.results.Load(transactionId)
 		if !ok {
 			modelPlugStatus <- ModelStatus{ModelID: modelID, Err: fmt.Errorf("transaction results not found")}
-			return
+			return nil
 		}
 		resultSyncMap.(*sync.Map).Store(modelID, res)
 		modelPlugStatus <- ModelStatus{ModelID: modelID, ProbAttack: res.ProbAttack, Err: nil}
 	}
+	return nil
 }
 
 // CheckResult is in charge of calling the decision plugin with id decisionID over the
@@ -335,13 +344,16 @@ func (p *PluginManager) CheckResult(transactionId, decisionId string, wafParams 
 		return false, fmt.Errorf("transaction results not found")
 	}
 
-	configStore := cf.Get()
+	cs, err := cf.Get()
+	if err != nil {
+		return false, nil
+	}
 
 	modelResultMap := make(map[string]ModelResults)
 	modelWeightMap := make(map[string]float64)
 	transactionResults.(*sync.Map).Range(func(key, value interface{}) bool {
 		modelResultMap[key.(string)] = value.(ModelResults)
-		modelWeightMap[key.(string)] = configStore.ModelPlugins[key.(string)].Weight
+		modelWeightMap[key.(string)] = cs.ModelPlugins[key.(string)].Weight
 		return true
 	})
 
@@ -352,9 +364,12 @@ func (p *PluginManager) CheckResult(transactionId, decisionId string, wafParams 
 }
 
 // ModelResultsHandler listens for messages on the model results queue
-func (p *PluginManager) ModelResultsHandler(modelId string) {
+func (p *PluginManager) ModelResultsHandler(modelId string) error {
 	logger := lg.Get()
-	conf := cf.Get()
+	cs, err := cf.Get()
+	if err != nil {
+		return err
+	}
 
 	sub, err := p.natConn.Subscribe(modelId+"/results", func(msg *nats.Msg) {
 		go func(msg nats.Msg) {
@@ -365,7 +380,7 @@ func (p *PluginManager) ModelResultsHandler(modelId string) {
 			} else {
 				var channel interface{}
 				var ok bool
-				if conf.ModelPlugins[modelId].Mode == "async" {
+				if cs.ModelPlugins[modelId].Mode == "async" {
 					channel, ok = p.asyncModelsChannels.Load(data.TransactionId)
 				} else {
 					channel, ok = p.syncModelsChannels.Load(data.TransactionId)
@@ -373,14 +388,14 @@ func (p *PluginManager) ModelResultsHandler(modelId string) {
 				if !ok {
 					logger.TPrintf(lg.ERROR, data.TransactionId, " Model %s | Transaction not found", modelId)
 				} else {
-					modelChannel, ok := channel.(*sync.Map).Load(conf.ModelPlugins[modelId].PluginType.String())
+					modelChannel, ok := channel.(*sync.Map).Load(cs.ModelPlugins[modelId].PluginType.String())
 					if !ok {
 						logger.Printf(lg.ERROR, "Model %s not found", modelId)
 					} else {
 						if data.Error != nil {
 							modelChannel.(chan ModelStatus) <- ModelStatus{ModelID: modelId, Err: data.Error}
 						} else {
-							if conf.ModelPlugins[modelId].Mode != "async" {
+							if cs.ModelPlugins[modelId].Mode != "async" {
 								// store the results
 								resultSyncMap, ok := p.results.Load(data.TransactionId)
 								if !ok {
@@ -400,7 +415,7 @@ func (p *PluginManager) ModelResultsHandler(modelId string) {
 
 	if err != nil {
 		logger.Printf(lg.ERROR, "Model: %s | Failed to subscribe to model queue | %s", modelId, err.Error())
-		return
+		return err
 	}
 
 	logger.Printf(lg.INFO, "Model: %s | Listening for messages on model results queue", modelId)
@@ -409,19 +424,23 @@ func (p *PluginManager) ModelResultsHandler(modelId string) {
 	defer p.natConn.Drain()
 
 	select {}
+
 }
 
 // ModelProcessHandler listens for messages on the model queue
-func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelResults, error)) {
+func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelResults, error)) error {
 	logger := lg.Get()
 	logger.Printf(lg.INFO, "Model: %s | Starting model process handler", modelId)
-	conf := cf.Get()
+	cs, err := cf.Get()
+	if err != nil {
+		return err
+	}
 
-	nc, err := nats.Connect(conf.NatsURL)
+	nc, err := nats.Connect(cs.NatsURL)
 
 	if err != nil {
 		logger.Printf(lg.ERROR, "Model: %s | Failed to connect to NATS server", modelId)
-		return
+		return err
 	}
 
 	_, err = nc.Subscribe(modelId, func(msg *nats.Msg) {
@@ -452,8 +471,9 @@ func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelRes
 
 	if err != nil {
 		logger.Printf(lg.ERROR, "Model: %s | Failed to subscribe to model queue | %s", modelId, err.Error())
-		return
+		return err
 	}
 
 	logger.Printf(lg.INFO, "Model: %s | Listening for messages on model queue", modelId)
+	return nil
 }

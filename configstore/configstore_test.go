@@ -43,9 +43,12 @@ decisionplugins:
 `)
 
 func initialize(configuration []byte) error {
-	cs := Get()
+	cs, err := Get()
+	if err != nil {
+		return err
+	}
 	var aux ConfigFileData
-	err := yaml.Unmarshal(configuration, &aux)
+	err = yaml.Unmarshal(configuration, &aux)
 	if err != nil {
 		return err
 	}
@@ -57,31 +60,55 @@ func initialize(configuration []byte) error {
 }
 
 func TestLoadConfigYamlEmpty(t *testing.T) {
+	_, err := New()
+	if err != nil {
+		t.Error(err)
+	}
 
-	err := initialize([]byte(`---`))
+	defer Clean()
+
+	err = initialize([]byte(`---`))
 	if err == nil {
-		t.Errorf("empty config does not return error")
+		t.Error("empty config does not return error")
 	}
 }
 
 func TestLoadConfigYamlValid(t *testing.T) {
+	_, err := New()
+	if err != nil {
+		t.Error(err)
+	}
 
-	err := initialize(validConfig)
+	defer Clean()
+
+	err = initialize(validConfig)
 	if err != nil {
 		t.Errorf("valid config returned error: %v", err)
 	}
 }
 
 func TestLoadConfigYamlInvalid(t *testing.T) {
+	_, err := New()
+	if err != nil {
+		t.Error(err)
+	}
 
-	err := initialize([]byte(`()=)(/&/()~@#~½¬{[{½¬½---sfdjlskjfs#@~sjdfa`))
+	defer Clean()
+
+	err = initialize([]byte(`()=)(/&/()~@#~½¬{[{½¬½---sfdjlskjfs#@~sjdfa`))
 
 	if err == nil {
-		t.Errorf("invalid config does not return error")
+		t.Error("invalid config does not return error")
 	}
 }
 
 func TestLoadConfigYamlLogLevel(t *testing.T) {
+	_, err := New()
+	if err != nil {
+		t.Error(err)
+	}
+
+	defer Clean()
 
 	values := []string{
 		"a",
@@ -93,7 +120,7 @@ func TestLoadConfigYamlLogLevel(t *testing.T) {
 		config := `---
 logpath: "/dev/null"
 loglevel: ` + v
-		err := initialize([]byte(config))
+		err = initialize([]byte(config))
 		if err == nil {
 			t.Errorf("invalid log level %v does not return error", v)
 		}
@@ -101,9 +128,14 @@ loglevel: ` + v
 }
 
 func TestLoadConfigYamlPluginType(t *testing.T) {
-	cs := Get()
+	cs, err := New()
+	if err != nil {
+		t.Error(err)
+	}
 
-	err := initialize([]byte(`---
+	defer Clean()
+
+	err = initialize([]byte(`---
 loglevel: ERROR
 logpath: /dev/null
 modelplugins:
@@ -203,37 +235,15 @@ modelplugins:
 	}
 }
 
-// func TestLoadConfig(t *testing.T) {
-// 	cs := Get()
-
-// 	err := cs.LoadConfig("")
-// 	if err == nil {
-// 		t.Errorf("empty config file path does not return error")
-// 	}
-
-// 	err = cs.LoadConfig("/dev/null")
-// 	if err == nil {
-// 		t.Errorf("empty config file contents does not return error")
-// 	}
-
-// 	tmpFile, err := ioutil.TempFile(os.TempDir(), "configstore_test-")
-// 	if err != nil {
-// 		t.Errorf("cannot create temporary file: %v", err)
-// 	}
-// 	defer os.Remove(tmpFile.Name())
-
-// 	if _, err = tmpFile.Write(validConfig); err != nil {
-// 		t.Errorf("failed to write to temporary file: %v", err)
-// 	}
-// 	err = cs.LoadConfig(tmpFile.Name())
-// 	if err != nil {
-// 		t.Errorf("valid config file returned error: %v", err)
-// 	}
-// }
-
 func TestInvalidLogging(t *testing.T) {
+	_, err := New()
+	if err != nil {
+		t.Error(err)
+	}
 
-	err := initialize([]byte(`---
+	defer Clean()
+
+	err = initialize([]byte(`---
 loglevel: INVALIDLOGLEVEL
 logpath: /dev/null
 `))
