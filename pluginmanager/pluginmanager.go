@@ -10,11 +10,11 @@ import (
 	"plugin"
 	"sync"
 
-	cf "github.com/tilsor/ModSecIntl_wace_lib/configstore"
+	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/nats-io/nats.go"
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
+	"github.com/tilsor/ModSecIntl_logging/logging"
 )
 
 // ResultData maps the model plugin ID with the corresponding analysis result.
@@ -47,7 +47,7 @@ type ModelTransmitionResults struct {
 // modelPlugin is the struct that stores the model plugin and its type
 type modelPlugin struct {
 	p          *plugin.Plugin
-	pluginType cf.ModelPluginType
+	pluginType configstore.ModelPluginType
 }
 
 // decisionPlugin is the struct that stores the decision plugin
@@ -80,17 +80,17 @@ type PluginManager struct {
 // New creates a new PluginManager instance.
 func New(meter metric.Meter) (*PluginManager, error) {
 	pm := new(PluginManager)
-	conf, err := cf.Get()
+	conf, err := configstore.Get()
 	if err != nil {
 		return nil, err
 	}
-	logger := lg.Get()
-	logger.Printf(lg.DEBUG, "Connecting to NATS server at %s", conf.NatsURL)
+	logger := logging.Get()
+	logger.Printf(logging.DEBUG, "Connecting to NATS server at %s", conf.NatsURL)
 
 	nc, err := nats.Connect(conf.NatsURL)
 
 	if err != nil {
-		logger.Printf(lg.ERROR, "Failed to connect to NATS server")
+		logger.Printf(logging.ERROR, "Failed to connect to NATS server")
 	}
 
 	pm.natConn = nc
@@ -101,55 +101,55 @@ func New(meter metric.Meter) (*PluginManager, error) {
 	for _, data := range conf.ModelPlugins {
 		tp, err := plugin.Open(data.Path)
 		if err != nil {
-			logger.Printf(lg.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+			logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 			continue
 		}
 		if data.Mode == "async" || conf.ModelPlugins[data.ID].Remote {
 			f, err := tp.Lookup("InitPluginAsync")
 			if err != nil {
-				logger.Printf(lg.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 				continue
 			}
 			initPlugin, ok := f.(func(map[string]string, metric.Meter, func(func(ModelInput) (ModelResults, error))) error)
 			if !ok {
-				logger.Printf(lg.WARN, "| %s | cannot load plugin: invalid InitPluginAsync function type", data.ID)
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid InitPluginAsync function type", data.ID)
 				continue
 			}
 			err = initPlugin(data.Params, meter, func(modelProcess func(ModelInput) (ModelResults, error)) {
 				ModelProcessHandler(data.ID, modelProcess)
 			})
 			if err != nil {
-				logger.Printf(lg.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 				continue
 			}
 			go pm.ModelResultsHandler(data.ID)
 		} else {
 			f, err := tp.Lookup("InitPlugin")
 			if err != nil {
-				logger.Printf(lg.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 				continue
 			}
 			initPlugin, ok := f.(func(map[string]string, metric.Meter) error)
 			if !ok {
-				logger.Printf(lg.WARN, "| %s | cannot load plugin: invalid InitPlugin function type", data.ID)
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid InitPlugin function type", data.ID)
 				continue
 			}
 			err = initPlugin(data.Params, meter)
 			procFunc, err := tp.Lookup("Process")
 			if err != nil {
-				logger.Printf(lg.WARN, "| %s | cannot load plugin: cannot load Process function", data.ID)
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: cannot load Process function", data.ID)
 				continue
 			}
 			process, ok := procFunc.(func(ModelInput) (ModelResults, error))
 			if !ok {
-				logger.Printf(lg.WARN, "| %s | cannot load plugin: invalid Process function type", data.ID)
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid Process function type", data.ID)
 				continue
 			}
 			pm.modelProcessFunc[data.ID] = process
 		}
 		modelPluginLoaded := modelPlugin{tp, data.PluginType}
 		pm.modelPlugins[data.ID] = modelPluginLoaded
-		logger.Printf(lg.INFO, "| %s | plugin loaded", data.ID)
+		logger.Printf(logging.INFO, "| %s | plugin loaded", data.ID)
 	}
 
 	pm.decisionPlugins = make(map[string]decisionPlugin)
@@ -158,32 +158,32 @@ func New(meter metric.Meter) (*PluginManager, error) {
 	for _, data := range conf.DecisionPlugins {
 		tp, err := plugin.Open(data.Path)
 		if err != nil {
-			logger.Printf(lg.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+			logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 			continue
 		}
 		f, err := tp.Lookup("InitPlugin")
 		if err != nil {
-			logger.Printf(lg.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+			logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 			continue
 		}
 		initPlugin, ok := f.(func(map[string]string, metric.Meter) error)
 		if !ok {
-			logger.Printf(lg.WARN, "| %s | cannot load plugin: invalid InitPlugin function type", data.ID)
+			logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid InitPlugin function type", data.ID)
 			continue
 		}
 		err = initPlugin(data.Params, meter)
 		if err != nil {
-			logger.Printf(lg.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+			logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 			continue
 		}
 		cR, err := tp.Lookup("CheckResults")
 		if err != nil {
-			logger.Printf(lg.ERROR, "| %s | cannot load plugin check results function: %v", data.ID, err)
+			logger.Printf(logging.ERROR, "| %s | cannot load plugin check results function: %v", data.ID, err)
 			continue
 		}
 		checkResults, ok := cR.(func(DecisionInput) (bool, error))
 		if !ok {
-			logger.Printf(lg.ERROR, "| %s | CheckResults lookup failed for plugin: invalid function type", data.ID)
+			logger.Printf(logging.ERROR, "| %s | CheckResults lookup failed for plugin: invalid function type", data.ID)
 			continue
 		}
 		pm.decisionCheckFunc[data.ID] = checkResults
@@ -201,10 +201,10 @@ func (p *PluginManager) InitTransaction(transactionId string) {
 // CloseTransaction closes the transaction with the given ID
 // removing all sync model data
 func (p *PluginManager) CloseTransaction(transactionId string) {
-	logger := lg.Get()
+	logger := logging.Get()
 	transactionMap, ok := p.syncModelsChannels.Load(transactionId)
 	if !ok {
-		logger.TPrintf(lg.ERROR, transactionId, "Transaction %s not found", transactionId)
+		logger.TPrintf(logging.ERROR, transactionId, "Transaction %s not found", transactionId)
 	} else {
 		transactionMap.(*sync.Map).Range(func(key, value interface{}) bool {
 			ch := value.(chan ModelStatus)
@@ -217,7 +217,7 @@ func (p *PluginManager) CloseTransaction(transactionId string) {
 		p.syncModelsChannels.Delete(transactionId)
 		resultsMap, ok := p.results.Load(transactionId)
 		if !ok {
-			logger.TPrintf(lg.ERROR, transactionId, "Results for transaction %s not found", transactionId)
+			logger.TPrintf(logging.ERROR, transactionId, "Results for transaction %s not found", transactionId)
 		} else {
 			resultsMap.(*sync.Map).Range(func(key, value interface{}) bool {
 				resultsMap.(*sync.Map).Delete(key)
@@ -229,7 +229,7 @@ func (p *PluginManager) CloseTransaction(transactionId string) {
 }
 
 // AddModelChannel adds a channel to result channel map
-func (p *PluginManager) AddModelChannel(transactionId string, t cf.ModelPluginType, modelPlugStatus chan ModelStatus, modelType string) {
+func (p *PluginManager) AddModelChannel(transactionId string, t configstore.ModelPluginType, modelPlugStatus chan ModelStatus, modelType string) {
 	typeModel := new(sync.Map)
 	var value interface{}
 	if modelType == "sync" {
@@ -241,7 +241,7 @@ func (p *PluginManager) AddModelChannel(transactionId string, t cf.ModelPluginTy
 }
 
 // RemoveModelChannel removes a channel from the result channel map
-func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t cf.ModelPluginType) {
+func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t configstore.ModelPluginType) {
 	typeModel, ok := p.asyncModelsChannels.Load(transactionId)
 	if ok {
 		channelMap := typeModel.(*sync.Map)
@@ -263,8 +263,8 @@ func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t cf.Model
 			p.asyncModelsChannels.Delete(transactionId)
 		}
 	} else {
-		logger := lg.Get()
-		logger.TPrintf(lg.ERROR, transactionId, "Transaction %s not found when trying to remove async model channel", transactionId)
+		logger := logging.Get()
+		logger.TPrintf(logging.ERROR, transactionId, "Transaction %s not found when trying to remove async model channel", transactionId)
 	}
 }
 
@@ -285,8 +285,8 @@ func (p *PluginManager) AddToQueue(modelId, transactionId, payload string) error
 }
 
 // Process is in charge of calling the model plugin with id modelID
-func (p *PluginManager) Process(modelID, transactionId, payload string, t cf.ModelPluginType, modelPlugStatus chan ModelStatus) error {
-	conf, err := cf.Get()
+func (p *PluginManager) Process(modelID, transactionId, payload string, t configstore.ModelPluginType, modelPlugStatus chan ModelStatus) error {
+	conf, err := configstore.Get()
 	if err != nil {
 		return err
 	}
@@ -332,7 +332,7 @@ func (p *PluginManager) Process(modelID, transactionId, payload string, t cf.Mod
 // CheckResult is in charge of calling the decision plugin with id decisionID over the
 // transaction with id transactID
 func (p *PluginManager) CheckResult(transactionId, decisionId string, wafParams map[string]string) (bool, error) {
-	logger := lg.Get()
+	logger := logging.Get()
 
 	checkResults, ok := p.decisionCheckFunc[decisionId]
 	if !ok {
@@ -344,7 +344,7 @@ func (p *PluginManager) CheckResult(transactionId, decisionId string, wafParams 
 		return false, fmt.Errorf("transaction results not found")
 	}
 
-	cs, err := cf.Get()
+	cs, err := configstore.Get()
 	if err != nil {
 		return false, nil
 	}
@@ -358,15 +358,15 @@ func (p *PluginManager) CheckResult(transactionId, decisionId string, wafParams 
 	})
 
 	res, err := checkResults(DecisionInput{TransactionId: transactionId, Results: modelResultMap, ModelWeight: modelWeightMap, WAFdata: wafParams})
-	logger.TPrintf(lg.INFO, transactionId, "%s | transaction checked. Block: %t ", decisionId, res)
+	logger.TPrintf(logging.INFO, transactionId, "%s | transaction checked. Block: %t ", decisionId, res)
 
 	return res, err
 }
 
 // ModelResultsHandler listens for messages on the model results queue
 func (p *PluginManager) ModelResultsHandler(modelId string) error {
-	logger := lg.Get()
-	cs, err := cf.Get()
+	logger := logging.Get()
+	cs, err := configstore.Get()
 	if err != nil {
 		return err
 	}
@@ -376,7 +376,7 @@ func (p *PluginManager) ModelResultsHandler(modelId string) error {
 			data := &ModelTransmitionResults{}
 			err := json.Unmarshal(msg.Data, data)
 			if err != nil {
-				logger.Printf(lg.ERROR, "Model: %s | Failed to parse JSON payload", modelId)
+				logger.Printf(logging.ERROR, "Model: %s | Failed to parse JSON payload", modelId)
 			} else {
 				var channel interface{}
 				var ok bool
@@ -386,11 +386,11 @@ func (p *PluginManager) ModelResultsHandler(modelId string) error {
 					channel, ok = p.syncModelsChannels.Load(data.TransactionId)
 				}
 				if !ok {
-					logger.TPrintf(lg.ERROR, data.TransactionId, " Model %s | Transaction not found", modelId)
+					logger.TPrintf(logging.ERROR, data.TransactionId, " Model %s | Transaction not found", modelId)
 				} else {
 					modelChannel, ok := channel.(*sync.Map).Load(cs.ModelPlugins[modelId].PluginType.String())
 					if !ok {
-						logger.Printf(lg.ERROR, "Model %s not found", modelId)
+						logger.Printf(logging.ERROR, "Model %s not found", modelId)
 					} else {
 						if data.Error != nil {
 							modelChannel.(chan ModelStatus) <- ModelStatus{ModelID: modelId, Err: data.Error}
@@ -414,11 +414,11 @@ func (p *PluginManager) ModelResultsHandler(modelId string) error {
 	})
 
 	if err != nil {
-		logger.Printf(lg.ERROR, "Model: %s | Failed to subscribe to model queue | %s", modelId, err.Error())
+		logger.Printf(logging.ERROR, "Model: %s | Failed to subscribe to model queue | %s", modelId, err.Error())
 		return err
 	}
 
-	logger.Printf(lg.INFO, "Model: %s | Listening for messages on model results queue", modelId)
+	logger.Printf(logging.INFO, "Model: %s | Listening for messages on model results queue", modelId)
 
 	defer sub.Unsubscribe()
 	defer p.natConn.Drain()
@@ -429,9 +429,9 @@ func (p *PluginManager) ModelResultsHandler(modelId string) error {
 
 // ModelProcessHandler listens for messages on the model queue
 func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelResults, error)) error {
-	logger := lg.Get()
-	logger.Printf(lg.INFO, "Model: %s | Starting model process handler", modelId)
-	cs, err := cf.Get()
+	logger := logging.Get()
+	logger.Printf(logging.INFO, "Model: %s | Starting model process handler", modelId)
+	cs, err := configstore.Get()
 	if err != nil {
 		return err
 	}
@@ -439,7 +439,7 @@ func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelRes
 	nc, err := nats.Connect(cs.NatsURL)
 
 	if err != nil {
-		logger.Printf(lg.ERROR, "Model: %s | Failed to connect to NATS server", modelId)
+		logger.Printf(logging.ERROR, "Model: %s | Failed to connect to NATS server", modelId)
 		return err
 	}
 
@@ -448,7 +448,7 @@ func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelRes
 			data := &ModelInput{}
 			err := json.Unmarshal(msg.Data, data)
 			if err != nil {
-				logger.Printf(lg.ERROR, "Model: %s | Failed to parse JSON payload", modelId)
+				logger.Printf(logging.ERROR, "Model: %s | Failed to parse JSON payload", modelId)
 			} else {
 				res, err := modelProcess(*data)
 				modelResult := ModelResults{ProbAttack: res.ProbAttack, Data: res.Data}
@@ -461,7 +461,7 @@ func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelRes
 				jsonPayload, err := json.Marshal(payloadToSend)
 
 				if err != nil {
-					logger.Printf(lg.ERROR, "Model: %s | Failed to parse JSON payload", modelId)
+					logger.Printf(logging.ERROR, "Model: %s | Failed to parse JSON payload", modelId)
 				}
 
 				nc.Publish(modelId+"/results", jsonPayload)
@@ -470,10 +470,10 @@ func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelRes
 	})
 
 	if err != nil {
-		logger.Printf(lg.ERROR, "Model: %s | Failed to subscribe to model queue | %s", modelId, err.Error())
+		logger.Printf(logging.ERROR, "Model: %s | Failed to subscribe to model queue | %s", modelId, err.Error())
 		return err
 	}
 
-	logger.Printf(lg.INFO, "Model: %s | Listening for messages on model queue", modelId)
+	logger.Printf(logging.INFO, "Model: %s | Listening for messages on model queue", modelId)
 	return nil
 }

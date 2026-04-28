@@ -7,10 +7,9 @@ package configstore
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
+	"github.com/tilsor/ModSecIntl_logging/logging"
 )
 
 // ModelPluginType is an enum listing the parts of a request or
@@ -94,7 +93,7 @@ type ConfigStore struct {
 	ModelPlugins    map[string]modelPluginConfig
 	DecisionPlugins map[string]decisionPluginConfig
 	LogPath         string
-	LogLevel        lg.LogLevel
+	LogLevel        logging.LogLevel
 	NatsURL         string
 	ApplicationId   string
 }
@@ -165,7 +164,7 @@ func checkLogging(inConf ConfigFileData) error {
 	if err != nil { // check if log file does not exists already
 		// Attempt to create dummy file
 		var d []byte
-		err = ioutil.WriteFile(inConf.Logpath, d, 0644)
+		err = os.WriteFile(inConf.Logpath, d, 0644)
 		if err == nil {
 			err = os.Remove(inConf.Logpath) // delete it
 		}
@@ -219,7 +218,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 	}
 
 	cs.LogPath = inConf.Logpath
-	cs.LogLevel, err = lg.StringToLogLevel(inConf.Loglevel)
+	cs.LogLevel, err = logging.StringToLogLevel(inConf.Loglevel)
 	if err != nil {
 		return err
 	}
