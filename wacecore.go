@@ -193,40 +193,40 @@ func Analyze(modelsTypeAsString, transactionId string, payload pluginmanager.HTT
 
 // CheckTransaction checks the result of the analysis of the transaction
 // with the given id and decision plugin
-func CheckTransaction(transactionId, decisionPlugin string, wafParams map[string]string) (bool, error) {
+func CheckTransaction(transactionID, decisionPlugin string, wafParams map[string]string) (bool, error) {
 	logger := logging.Get()
-	logger.TPrintf(logging.DEBUG, transactionId, "core | checking transaction")
+	logger.TPrintf(logging.DEBUG, transactionID, "core | checking transaction")
 
-	value, exists := analysisMap.Load(transactionId)
+	value, exists := analysisMap.Load(transactionID)
 
 	if !exists {
-		return false, fmt.Errorf("transaction with id %s does not exist", transactionId)
+		return false, fmt.Errorf("transaction with id %s does not exist", transactionID)
 	}
 
 	sync := value.(*transactionSync)
 
-	logger.TPrintln(logging.DEBUG, transactionId, "core | waiting for all models to finish...")
+	logger.TPrintln(logging.DEBUG, transactionID, "core | waiting for all models to finish...")
 
 	for i := 0; i < int(sync.Counter); i++ {
 		<-sync.Channel
 	}
 	sync.Counter = 0
 
-	logger.TPrintln(logging.DEBUG, transactionId, "core | done, checking data...")
-	res, err := plugins.CheckResult(transactionId, decisionPlugin, wafParams)
+	logger.TPrintln(logging.DEBUG, transactionID, "core | done, checking data...")
+	res, err := plugins.CheckResult(transactionID, decisionPlugin, wafParams)
 
 	if err == nil {
-		logger.TPrintf(logging.DEBUG, transactionId, "core | transaction checked successfully. Blocking transaction: %t", res)
+		logger.TPrintf(logging.DEBUG, transactionID, "core | transaction checked successfully. Blocking transaction: %t", res)
 
 		if res {
 			metric, err := meter.Int64Counter("wace.client.request.blocked.total", metric.WithDescription(decisionPlugin))
 			if err != nil {
-				logger.TPrintf(logging.WARN, transactionId, "core | failed to record blocked request metric: %v", err.Error())
+				logger.TPrintf(logging.WARN, transactionID, "core | failed to record blocked request metric: %v", err.Error())
 			}
 			metric.Add(ctx, 1)
 		}
 	} else {
-		logger.TPrintf(logging.ERROR, transactionId, "core | could not check transaction: %v", err)
+		logger.TPrintf(logging.ERROR, transactionID, "core | could not check transaction: %v", err)
 	}
 	return res, err
 }
