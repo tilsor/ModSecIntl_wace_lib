@@ -23,10 +23,27 @@ type ModelResults struct {
 	Data       map[string]interface{} `json:"data"`
 }
 
+type HTTPHeader struct {
+	Key   string
+	Value string
+}
+
+type HTTPPayload struct {
+	URI              string
+	Method           string
+	HTTPVersion      string
+	RequestHeaders   []HTTPHeader
+	RequestBody      string
+	ResponseProtocol string
+	ResponseCode     int
+	ResponseHeaders  []HTTPHeader
+	ResponseBody     string
+}
+
 // ModelInput is the struct that contains the input data for the model plugin
 type ModelInput struct {
-	TransactionId string `json:"transactionId"`
-	Payload       string `json:"payload"`
+	TransactionId string      `json:"transactionId"`
+	Payload       HTTPPayload `json:"payload"`
 }
 
 // DecisionInput is the struct that contains the input data for the decision plugin
@@ -269,9 +286,9 @@ func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t configst
 }
 
 // AddToQueue adds a payload to the model queue
-func (p *PluginManager) AddToQueue(modelId, transactionId, payload string) error {
+func (p *PluginManager) AddToQueue(modelID, transactionID string, payload HTTPPayload) error {
 	payloadToSend := &ModelInput{
-		TransactionId: transactionId,
+		TransactionId: transactionID,
 		Payload:       payload,
 	}
 
@@ -281,11 +298,11 @@ func (p *PluginManager) AddToQueue(modelId, transactionId, payload string) error
 		return err
 	}
 
-	return p.natConn.Publish(modelId, jsonPayload)
+	return p.natConn.Publish(modelID, jsonPayload)
 }
 
 // Process is in charge of calling the model plugin with id modelID
-func (p *PluginManager) Process(modelID, transactionId, payload string, t configstore.ModelPluginType, modelPlugStatus chan ModelStatus) error {
+func (p *PluginManager) Process(modelID, transactionId string, payload HTTPPayload, t configstore.ModelPluginType, modelPlugStatus chan ModelStatus) error {
 	conf, err := configstore.Get()
 	if err != nil {
 		return err

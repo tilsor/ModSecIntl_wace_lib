@@ -34,7 +34,7 @@ func InitPluginAsync(params map[string]string, meter metric.Meter, natsManager f
 
 func Process(input pm.ModelInput) (pm.ModelResults, error) {
 	logger := lg.Get()
-	logger.TPrintf(lg.WARN, input.TransactionId, "[trivial:Process] \"%s\"\n", input.Payload)
+	logger.TPrintf(lg.WARN, input.TransactionId, "[trivial:Process] \"%v\"\n", input.Payload)
 	result := pm.ModelResults{
 		ProbAttack: 0.0,
 		Data:       make(map[string]interface{}),
