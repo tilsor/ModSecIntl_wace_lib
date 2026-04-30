@@ -103,7 +103,7 @@ var config *ConfigStore
 // Create and returns the unique instance of configstore if it does not exist previously, in other case returns error
 func New() (*ConfigStore, error) {
 	if config != nil {
-		return nil, fmt.Errorf("ConfigStore already exists")
+		return nil, fmt.Errorf("ConfigStore: an instance already exists")
 	}
 	config = new(ConfigStore)
 	return config, nil
@@ -112,7 +112,7 @@ func New() (*ConfigStore, error) {
 // Get returns the unique instance of configstore
 func Get() (*ConfigStore, error) {
 	if config == nil {
-		return nil, fmt.Errorf("Configuration was not loaded")
+		return nil, fmt.Errorf("ConfigStore: Configuration was not loaded")
 	}
 	return config, nil
 }

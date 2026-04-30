@@ -276,15 +276,7 @@ func initilize(configuration []byte) error {
 	if err != nil {
 		return err
 	}
-	cs, err := configstore.Get()
-	if err != nil {
-		return err
-	}
-	err = cs.SetConfig(aux)
-	if err != nil {
-		return err
-	}
-	err = Init(testMeter)
+	err = Init(testMeter, aux)
 	if err != nil {
 		return err
 	}
@@ -302,13 +294,8 @@ func generateRandomID() string {
 }
 
 func TestAnalyzeRequestInParts(t *testing.T) {
-	_, err := configstore.New()
-	if err != nil {
-		t.Error(err)
-	}
-
+	err := initilize(configAllModels)
 	defer configstore.Clean()
-	err = initilize(configAllModels)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -335,13 +322,8 @@ func TestAnalyzeRequestInParts(t *testing.T) {
 }
 
 func TestAnalyzeWholeRequest(t *testing.T) {
-	_, err := configstore.New()
-	if err != nil {
-		t.Error(err)
-	}
-
+	err := initilize(configAllModels)
 	defer configstore.Clean()
-	err = initilize(configAllModels)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -364,13 +346,8 @@ func TestAnalyzeWholeRequest(t *testing.T) {
 }
 
 func TestAnalyzeResponseInParts(t *testing.T) {
-	_, err := configstore.New()
-	if err != nil {
-		t.Error(err)
-	}
-
+	err := initilize(configAllModels)
 	defer configstore.Clean()
-	err = initilize(configAllModels)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -397,13 +374,8 @@ func TestAnalyzeResponseInParts(t *testing.T) {
 }
 
 func TestAnalyzeWholeResponse(t *testing.T) {
-	_, err := configstore.New()
-	if err != nil {
-		t.Error(err)
-	}
-
+	err := initilize(configAllModels)
 	defer configstore.Clean()
-	err = initilize(configAllModels)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -426,16 +398,12 @@ func TestAnalyzeWholeResponse(t *testing.T) {
 }
 
 func TestAnalyzeRequestInPartsAsync(t *testing.T) {
-	_, err := configstore.New()
-	if err != nil {
-		t.Error(err)
-	}
-
+	err := initilize(configAsync)
 	defer configstore.Clean()
-	err = initilize(configAsync)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
+
 	transactionID := generateRandomID()
 
 	InitTransaction(transactionID)
@@ -463,16 +431,12 @@ func TestCheckInvalidTransaction(t *testing.T) {
 }
 
 func TestCheckAttackTransaction(t *testing.T) {
-	_, err := configstore.New()
-	if err != nil {
-		t.Error(err)
-	}
-
+	err := initilize(configSyncNoRemote)
 	defer configstore.Clean()
-	err = initilize(configSyncNoRemote)
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
+
 	transactionID := generateRandomID()
 
 	InitTransaction(transactionID)
@@ -546,17 +510,12 @@ func TestCheckAttackTransaction(t *testing.T) {
 // }
 
 func BenchmarkTrivial(b *testing.B) {
-
-	_, err := configstore.New()
-	if err != nil {
-		b.Error(err)
-	}
-
+	err := initilize(configSyncNoRemote)
 	defer configstore.Clean()
-	err = initilize(configSyncNoRemote)
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)
 	}
+
 	wafParams := make(map[string]string)
 	auxString := "COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2"
 	for _, score := range strings.Split(auxString, ",") {
@@ -578,16 +537,12 @@ func BenchmarkTrivial(b *testing.B) {
 }
 
 func BenchmarkTrivialFullNATS(b *testing.B) {
-	_, err := configstore.New()
-	if err != nil {
-		b.Error(err)
-	}
-
+	err := initilize(configSyncRemote)
 	defer configstore.Clean()
-	err = initilize(configSyncRemote)
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)
 	}
+
 	time.Sleep(2 * time.Millisecond)
 	wafParams := make(map[string]string)
 	auxString := "COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2"

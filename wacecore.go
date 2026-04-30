@@ -249,17 +249,27 @@ func CloseTransaction(transactionID string) {
 }
 
 // Init initializes the WACE core with the given metric meter
-func Init(met metric.Meter) error {
+func Init(met metric.Meter, conf configstore.ConfigFileData) error {
 	logger := logging.Get()
-	conf, err := configstore.Get()
+
+	cs, err := configstore.New()
+	if err != nil {
+		return err
+	}
+
+	err = cs.SetConfig(conf)
+	if err != nil {
+		return err
+	}
+
 	meter = met
 
-	err = logger.LoadLogger(conf.LogPath, conf.LogLevel)
+	err = logger.LoadLogger(cs.LogPath, cs.LogLevel)
 	if err != nil {
 		logger.Printf(logging.ERROR, "ERROR: could not open wace log file: %v", err)
 		return err
 	}
-	logger.Printf(logging.DEBUG, "Writing logs to %s from now", conf.LogPath)
+	logger.Printf(logging.DEBUG, "Writing logs to %s from now", cs.LogPath)
 
 	logger.Println(logging.DEBUG, "Loading plugin manager...")
 	plugins, err = pluginmanager.New(met)
