@@ -4,11 +4,11 @@ import (
 	"math/rand"
 	"time"
 
-	cf "github.com/tilsor/ModSecIntl_wace_lib/configstore"
+	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"gopkg.in/yaml.v3"
 
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
+	"github.com/tilsor/ModSecIntl_logging/logging"
 )
 
 var baseConfig = `---
@@ -51,19 +51,22 @@ var provider = metric.NewMeterProvider()
 var testMeter = provider.Meter("example-meter")
 
 func initilize(configuration []byte) error {
-	var aux cf.ConfigFileData
+	var aux configstore.ConfigFileData
 	err := yaml.Unmarshal(configuration, &aux)
 	if err != nil {
 		return err
 	}
-	err = cf.Get().SetConfig(aux)
+	cs, err := configstore.Get()
 	if err != nil {
 		return err
 	}
-	logger := lg.Get()
+	err = cs.SetConfig(aux)
+	if err != nil {
+		return err
+	}
+	logger := logging.Get()
 
-	conf := cf.Get()
-	err = logger.LoadLogger(conf.LogPath, conf.LogLevel)
+	err = logger.LoadLogger(cs.LogPath, cs.LogLevel)
 	if err != nil {
 		return err
 
@@ -74,8 +77,8 @@ func initilize(configuration []byte) error {
 func init() {
 	rand.Seed(time.Now().UnixNano())
 
-	logger := lg.Get()
-	err := logger.LoadLogger("/dev/null", lg.ERROR)
+	logger := logging.Get()
+	err := logger.LoadLogger("/dev/null", logging.ERROR)
 	if err != nil {
 		panic("Error loading logger")
 	}

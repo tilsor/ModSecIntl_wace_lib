@@ -7,40 +7,74 @@ import (
 	"testing"
 	"time"
 
-	cf "github.com/tilsor/ModSecIntl_wace_lib/configstore"
+	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
+	"github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
 	"go.opentelemetry.io/otel/sdk/metric"
 
 	"gopkg.in/yaml.v3"
 )
 
-var requestLine = "POST /cgi-bin/process.cgi HTTP/1.1\n"
-var requestHeaders = `User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)
-Host: www.tutorialspoint.com
-Content-Type: application/x-www-form-urlencoded
-Content-Length: length
-Accept-Language: en-us
-Accept-Encoding: gzip, deflate
-Connection: Keep-Alive
-`
+var requestURI = "/cgi-bin/process.cgi"
+var requestMethod = "POST"
+var requestVersion = "HTTP/1.1"
+
+// var requestLine = "POST /cgi-bin/process.cgi HTTP/1.1\n"
+
+var requestHeaders = []pluginmanager.HTTPHeader{
+	{Key: "User-Agent", Value: "Mozilla/4.0 (compatible; MSIE5.01; Windows NT)"},
+	{Key: "Host", Value: "www.tutorialspoint.com"},
+	{Key: "Content-Type", Value: "application/x-www-form-urlencoded"},
+	{Key: "Content-Length", Value: "length"},
+	{Key: "Accept-Language", Value: "en-us"},
+	{Key: "Accept-Encoding", Value: "gzip, deflate"},
+	{Key: "Connection", Value: "Keep-Alive"},
+}
+
+var requestHeadersPayload = pluginmanager.HTTPPayload{
+	URI:         requestURI,
+	Method:      requestMethod,
+	HTTPVersion: requestVersion,
+}
 
 var requestBody = "licenseID=string&content=string&/paramsXML=string\n"
-var wholeRequest = requestLine + requestHeaders + "\n" + requestBody
+var wholeRequest = pluginmanager.HTTPPayload{
+	URI:         requestURI,
+	Method:      requestMethod,
+	HTTPVersion: requestVersion,
+	RequestBody: requestBody,
+}
 
-var responseLine = "HTTP/1.1 200 OK\n"
-var responseHeaders = `Date: Mon, 27 Jul 2009 12:28:53 GMT
-Server: Apache/2.2.14 (Win32)
-Last-Modified: Wed, 22 Jul 2009 19:15:56 GMT
-Content-Length: 88
-Content-Type: text/html
-Connection: Closed
-`
+// var wholeRequest = requestLine + requestHeaders + "\n" + requestBody
+var responseCode = 200
+var responseProto = "HTTP/1.1"
+var responseHeaders = []pluginmanager.HTTPHeader{
+	{Key: "Date", Value: "Mon, 27 Jul 2009 12:28:53 GMT"},
+	{Key: "Server", Value: "Apache/2.2.14 (Win32)"},
+	{Key: "Last-Modified", Value: "Wed, 22 Jul 2009 19:15:56 GMT"},
+	{Key: "Content-Length", Value: "88"},
+	{Key: "Content-Type", Value: "text/html"},
+	{Key: "Connection", Value: "Closed"},
+}
+
+var responseHeadersPayload = pluginmanager.HTTPPayload{
+	ResponseProtocol: responseProto,
+	ResponseCode:     responseCode,
+	ResponseHeaders:  responseHeaders,
+}
+
 var responseBody = `<html>
 <body>
 <h1>Hello, World!</h1>
 </body>
 </html>
 `
-var wholeResponse = responseLine + responseHeaders + "\n" + responseBody
+
+var wholeResponse = pluginmanager.HTTPPayload{
+	ResponseProtocol: responseProto,
+	ResponseCode:     responseCode,
+	ResponseHeaders:  responseHeaders,
+	ResponseBody:     responseBody,
+}
 
 var config = []byte(`---
 logpath: "/dev/null"
@@ -237,16 +271,15 @@ var provider = metric.NewMeterProvider()
 var testMeter = provider.Meter("example-meter")
 
 func initilize(configuration []byte) error {
-	var aux cf.ConfigFileData
+	var aux configstore.ConfigFileData
 	err := yaml.Unmarshal(configuration, &aux)
 	if err != nil {
 		return err
 	}
-	err = cf.Get().SetConfig(aux)
+	err = Init(testMeter, aux)
 	if err != nil {
 		return err
 	}
-	Init(testMeter)
 	return nil
 }
 
@@ -262,6 +295,7 @@ func generateRandomID() string {
 
 func TestAnalyzeRequestInParts(t *testing.T) {
 	err := initilize(configAllModels)
+	defer configstore.Clean()
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -270,11 +304,11 @@ func TestAnalyzeRequestInParts(t *testing.T) {
 
 	InitTransaction(transactionID)
 
-	res := Analyze("RequestHeaders", transactionID, requestLine+"\n"+requestHeaders, []string{"trivialRequestHeaders"})
+	res := Analyze("RequestHeaders", transactionID, requestHeadersPayload, []string{"trivialRequestHeaders"})
 	if res != nil {
 		t.Errorf("Error: Analyze RequestHeaders: %s", res.Error())
 	}
-	res = Analyze("RequestBody", transactionID, requestBody, []string{"trivialRequestBody"})
+	res = Analyze("RequestBody", transactionID, pluginmanager.HTTPPayload{ResponseBody: requestBody}, []string{"trivialRequestBody"})
 	if res != nil {
 		t.Errorf("Error: Analyze RequestBody: %s", res.Error())
 	}
@@ -289,6 +323,7 @@ func TestAnalyzeRequestInParts(t *testing.T) {
 
 func TestAnalyzeWholeRequest(t *testing.T) {
 	err := initilize(configAllModels)
+	defer configstore.Clean()
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -312,6 +347,7 @@ func TestAnalyzeWholeRequest(t *testing.T) {
 
 func TestAnalyzeResponseInParts(t *testing.T) {
 	err := initilize(configAllModels)
+	defer configstore.Clean()
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -320,11 +356,11 @@ func TestAnalyzeResponseInParts(t *testing.T) {
 
 	InitTransaction(transactionID)
 
-	res := Analyze("ResponseHeaders", transactionID, responseLine+"\n"+responseHeaders, []string{"trivialResponseHeaders"})
+	res := Analyze("ResponseHeaders", transactionID, responseHeadersPayload, []string{"trivialResponseHeaders"})
 	if res != nil {
 		t.Errorf("Error: Analyze ResponseHeaders: %s", res.Error())
 	}
-	res = Analyze("ResponseBody", transactionID, responseBody, []string{"trivialResponseBody"})
+	res = Analyze("ResponseBody", transactionID, pluginmanager.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"})
 	if res != nil {
 		t.Errorf("Error: Analyze ResponseBody: %s", res.Error())
 	}
@@ -339,6 +375,7 @@ func TestAnalyzeResponseInParts(t *testing.T) {
 
 func TestAnalyzeWholeResponse(t *testing.T) {
 	err := initilize(configAllModels)
+	defer configstore.Clean()
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
@@ -361,18 +398,17 @@ func TestAnalyzeWholeResponse(t *testing.T) {
 }
 
 func TestAnalyzeRequestInPartsAsync(t *testing.T) {
-	var aux cf.ConfigFileData
-	err := yaml.Unmarshal(configAsync, &aux)
+	err := initilize(configAsync)
+	defer configstore.Clean()
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
-	err = cf.Get().SetConfig(aux)
-	Init(testMeter)
+
 	transactionID := generateRandomID()
 
 	InitTransaction(transactionID)
 
-	res := Analyze("RequestHeaders", transactionID, requestLine+"\n"+requestHeaders, []string{"trivial", "trivial2"})
+	res := Analyze("RequestHeaders", transactionID, requestHeadersPayload, []string{"trivial", "trivial2"})
 	if res != nil {
 		t.Errorf("Error: Analyze RequestHeaders: %s", res.Error())
 	}
@@ -395,13 +431,12 @@ func TestCheckInvalidTransaction(t *testing.T) {
 }
 
 func TestCheckAttackTransaction(t *testing.T) {
-	var aux cf.ConfigFileData
-	err := yaml.Unmarshal(configSyncNoRemote, &aux)
+	err := initilize(configSyncNoRemote)
+	defer configstore.Clean()
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
 	}
-	err = cf.Get().SetConfig(aux)
-	Init(testMeter)
+
 	transactionID := generateRandomID()
 
 	InitTransaction(transactionID)
@@ -413,7 +448,7 @@ func TestCheckAttackTransaction(t *testing.T) {
 		wafParams[scoreParts[0]] = scoreParts[1]
 	}
 
-	err = Analyze("RequestHeaders", transactionID, requestLine+"\n"+requestHeaders, []string{"trivial", "trivial2", "trivial3"})
+	err = Analyze("RequestHeaders", transactionID, requestHeadersPayload, []string{"trivial", "trivial2", "trivial3"})
 	if err != nil {
 		t.Errorf("Error: Analyze RequestHeaders: %s", err.Error())
 	}
@@ -475,14 +510,12 @@ func TestCheckAttackTransaction(t *testing.T) {
 // }
 
 func BenchmarkTrivial(b *testing.B) {
-
-	var aux cf.ConfigFileData
-	err := yaml.Unmarshal(configSyncNoRemote, &aux)
+	err := initilize(configSyncNoRemote)
+	defer configstore.Clean()
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)
 	}
-	err = cf.Get().SetConfig(aux)
-	Init(testMeter)
+
 	wafParams := make(map[string]string)
 	auxString := "COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2"
 	for _, score := range strings.Split(auxString, ",") {
@@ -493,7 +526,7 @@ func BenchmarkTrivial(b *testing.B) {
 		transactionId := strconv.Itoa(i)
 		InitTransaction(transactionId)
 
-		Analyze("RequestHeaders", transactionId, "Request line and headers\n", []string{"trivial", "trivial2"})
+		Analyze("RequestHeaders", transactionId, pluginmanager.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
 
 		_, err := CheckTransaction(transactionId, "simple", wafParams)
 		if err != nil {
@@ -504,13 +537,12 @@ func BenchmarkTrivial(b *testing.B) {
 }
 
 func BenchmarkTrivialFullNATS(b *testing.B) {
-	var aux cf.ConfigFileData
-	err := yaml.Unmarshal(configSyncRemote, &aux)
+	err := initilize(configSyncRemote)
+	defer configstore.Clean()
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)
 	}
-	err = cf.Get().SetConfig(aux)
-	Init(testMeter)
+
 	time.Sleep(2 * time.Millisecond)
 	wafParams := make(map[string]string)
 	auxString := "COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2"
@@ -522,7 +554,7 @@ func BenchmarkTrivialFullNATS(b *testing.B) {
 		transactionId := generateRandomID()
 		InitTransaction(transactionId)
 
-		Analyze("RequestHeaders", transactionId, "Request line and headers\n", []string{"trivial", "trivial2"})
+		Analyze("RequestHeaders", transactionId, pluginmanager.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
 
 		_, err := CheckTransaction(transactionId, "simple", wafParams)
 		if err != nil {
