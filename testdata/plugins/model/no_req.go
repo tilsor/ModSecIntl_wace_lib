@@ -8,3 +8,8 @@ import "go.opentelemetry.io/otel/metric"
 func InitPlugin(params map[string]string, meter metric.Meter) error {
 	return nil
 }
+
+// ReloadPlugin reload the plugin
+func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+	return nil
+}

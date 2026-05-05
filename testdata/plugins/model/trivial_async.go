@@ -56,3 +56,7 @@ func Process(input pm.ModelInput) (pm.ModelResults, error) {
 	}
 	return result, nil
 }
+
+// ReloadPlugin reload the pluginfunc ReloadPlugin(params map[string]string, meter metric.Meter) error {
+	return nil
+}

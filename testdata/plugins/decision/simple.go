@@ -90,3 +90,8 @@ func CheckResults(decisionInput pm.DecisionInput) (bool, error) {
 // 	}
 // 	return false, nil
 // }
+
+// ReloadPlugin reload the plugin
+func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+	return nil
+}

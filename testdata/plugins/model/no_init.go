@@ -3,7 +3,10 @@
 
 package main
 
-import pm "github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
+import (
+	pm "github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
+	"go.opentelemetry.io/otel/metric"
+)
 
 // Process always returns 0 probability of attack
 func Process(input pm.ModelInput) (pm.ModelResults, error) {
@@ -12,4 +15,9 @@ func Process(input pm.ModelInput) (pm.ModelResults, error) {
 		Data:       make(map[string]interface{}),
 	}
 	return result, nil
+}
+
+// ReloadPlugin reload the plugin
+func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+	return nil
 }

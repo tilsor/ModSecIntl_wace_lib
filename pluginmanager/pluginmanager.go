@@ -65,11 +65,15 @@ type ModelTransmitionResults struct {
 type modelPlugin struct {
 	p          *plugin.Plugin
 	pluginType configstore.ModelPluginType
+	process    func(ModelInput) (ModelResults, error)
+	reload     func(map[string]string, metric.Meter) error
 }
 
 // decisionPlugin is the struct that stores the decision plugin
 type decisionPlugin struct {
-	p *plugin.Plugin
+	p            *plugin.Plugin
+	checkResults func(DecisionInput) (bool, error)
+	reload       func(map[string]string, metric.Meter) error
 }
 
 // ModelStatus stores whether there was an error while processing a
@@ -84,8 +88,6 @@ type ModelStatus struct {
 // every plugin execution.
 type PluginManager struct {
 	modelPlugins        map[string]modelPlugin
-	modelProcessFunc    map[string]func(ModelInput) (ModelResults, error)
-	decisionCheckFunc   map[string]func(DecisionInput) (bool, error)
 	decisionPlugins     map[string]decisionPlugin
 	results             sync.Map
 	channelsMutex       sync.Mutex
@@ -93,6 +95,19 @@ type PluginManager struct {
 	asyncModelsChannels sync.Map
 	natConn             *nats.Conn
 }
+
+const (
+	// model plugin function names
+	modelInitFunctionName      = "InitPlugin"
+	modelInitAsyncFunctionName = "InitPluginAsync"
+	modelProcessFunctionName   = "Process"
+	modelReloadFunction        = "ReloadPlugin"
+
+	// decision plugin function names
+	decisionInitFunctionName   = "InitPlugin"
+	decisionCheckFuncionName   = "CheckResults"
+	decisionReloadFunctionName = "ReloadPlugin"
+)
 
 // New creates a new PluginManager instance.
 func New(meter metric.Meter) (*PluginManager, error) {
@@ -112,102 +127,171 @@ func New(meter metric.Meter) (*PluginManager, error) {
 
 	pm.natConn = nc
 
-	// Loading of model plugins
 	pm.modelPlugins = make(map[string]modelPlugin)
-	pm.modelProcessFunc = make(map[string]func(ModelInput) (ModelResults, error))
+	pm.loadModelPlugins(meter)
+
+	pm.decisionPlugins = make(map[string]decisionPlugin)
+	pm.loadDecisionPlugins(meter)
+
+	return pm, nil
+}
+
+// loadModelPlugins load new Plugins and reload their configuration if they previously existed
+func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
+	conf, err := configstore.Get()
+	if err != nil {
+		return err
+	}
+	logger := logging.Get()
+
+	// Load plugin models
 	for _, data := range conf.ModelPlugins {
-		tp, err := plugin.Open(data.Path)
-		if err != nil {
-			logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
-			continue
-		}
-		if data.Mode == "async" || conf.ModelPlugins[data.ID].Remote {
-			f, err := tp.Lookup("InitPluginAsync")
+		mp, found := pm.modelPlugins[data.ID]
+		if !found {
+			p, err := plugin.Open(data.Path)
 			if err != nil {
-				logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+				logger.Printf(logging.WARN, "| %s | cannot open plugin: %v", data.ID, err)
 				continue
 			}
-			initPlugin, ok := f.(func(map[string]string, metric.Meter, func(func(ModelInput) (ModelResults, error))) error)
+			var processFunc func(ModelInput) (ModelResults, error)
+			// TODO: change mode to bool
+			if data.Mode == "async" || conf.ModelPlugins[data.ID].Remote {
+				f, err := p.Lookup(modelInitAsyncFunctionName)
+				if err != nil {
+					logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+					continue
+				}
+				initPlugin, ok := f.(func(map[string]string, metric.Meter, func(func(ModelInput) (ModelResults, error))) error)
+				if !ok {
+					logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid %s function type", data.ID, modelInitAsyncFunctionName)
+					continue
+				}
+
+				// plugin initialization
+				err = initPlugin(data.Params, meter, func(modelProcess func(ModelInput) (ModelResults, error)) {
+					ModelProcessHandler(data.ID, modelProcess)
+				})
+				if err != nil {
+					logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+					continue
+				}
+				go pm.ModelResultsHandler(data.ID)
+			} else {
+				f, err := p.Lookup(modelInitFunctionName)
+				if err != nil {
+					logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+					continue
+				}
+				initPlugin, ok := f.(func(map[string]string, metric.Meter) error)
+				if !ok {
+					logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid %s function type", data.ID, modelInitFunctionName)
+					continue
+				}
+
+				// plugin initialization
+				err = initPlugin(data.Params, meter)
+				procFunc, err := p.Lookup(modelProcessFunctionName)
+				if err != nil {
+					logger.Printf(logging.WARN, "| %s | cannot load plugin: cannot load %s function", data.ID, modelProcessFunctionName)
+					continue
+				}
+				processFunc, ok = procFunc.(func(ModelInput) (ModelResults, error))
+				if !ok {
+					logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid %s function type", data.ID, modelProcessFunctionName)
+					continue
+				}
+			}
+			rFun, err := p.Lookup(modelReloadFunction)
+			if err != nil {
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: cannot load %s function", data.ID, modelReloadFunction)
+				continue
+			}
+			reload, ok := rFun.(func(map[string]string, metric.Meter) error)
 			if !ok {
-				logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid InitPluginAsync function type", data.ID)
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid %s function type", data.ID, modelReloadFunction)
 				continue
 			}
-			err = initPlugin(data.Params, meter, func(modelProcess func(ModelInput) (ModelResults, error)) {
-				ModelProcessHandler(data.ID, modelProcess)
-			})
+			modelPluginLoaded := modelPlugin{p, data.PluginType, processFunc, reload}
+			pm.modelPlugins[data.ID] = modelPluginLoaded
+			logger.Printf(logging.INFO, "| %s | plugin loaded", data.ID)
+		} else {
+			err = mp.reload(data.Params, meter)
+			if err != nil {
+				logger.Printf(logging.WARN, "| %s | cannot reload plugin: %s", data.ID, err.Error())
+				continue
+			}
+		}
+	}
+	return nil
+}
+
+// loadDecisionPlugins load new Plugins and reload their configuration if they previously existed
+func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
+	conf, err := configstore.Get()
+	if err != nil {
+		return err
+	}
+	logger := logging.Get()
+
+	// Load decision plugins
+	for _, data := range conf.DecisionPlugins {
+		dp, found := pm.decisionPlugins[data.ID]
+		if !found {
+			p, err := plugin.Open(data.Path)
 			if err != nil {
 				logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 				continue
 			}
-			go pm.ModelResultsHandler(data.ID)
-		} else {
-			f, err := tp.Lookup("InitPlugin")
+			f, err := p.Lookup(decisionInitFunctionName)
 			if err != nil {
 				logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 				continue
 			}
 			initPlugin, ok := f.(func(map[string]string, metric.Meter) error)
 			if !ok {
-				logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid InitPlugin function type", data.ID)
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid %s function type", data.ID, decisionInitFunctionName)
 				continue
 			}
-			err = initPlugin(data.Params, meter)
-			procFunc, err := tp.Lookup("Process")
-			if err != nil {
-				logger.Printf(logging.WARN, "| %s | cannot load plugin: cannot load Process function", data.ID)
-				continue
-			}
-			process, ok := procFunc.(func(ModelInput) (ModelResults, error))
-			if !ok {
-				logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid Process function type", data.ID)
-				continue
-			}
-			pm.modelProcessFunc[data.ID] = process
-		}
-		modelPluginLoaded := modelPlugin{tp, data.PluginType}
-		pm.modelPlugins[data.ID] = modelPluginLoaded
-		logger.Printf(logging.INFO, "| %s | plugin loaded", data.ID)
-	}
 
-	pm.decisionPlugins = make(map[string]decisionPlugin)
-	pm.decisionCheckFunc = make(map[string]func(DecisionInput) (bool, error))
-	// Loading of decision plugins
-	for _, data := range conf.DecisionPlugins {
-		tp, err := plugin.Open(data.Path)
-		if err != nil {
-			logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
-			continue
+			// plugin initialization
+			err = initPlugin(data.Params, meter)
+			if err != nil {
+				logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
+				continue
+			}
+			checkFunc, err := p.Lookup(decisionCheckFuncionName)
+			if err != nil {
+				logger.Printf(logging.ERROR, "| %s | cannot load plugin %s function: %v", data.ID, decisionCheckFuncionName, err)
+				continue
+			}
+			checkResults, ok := checkFunc.(func(DecisionInput) (bool, error))
+			if !ok {
+				logger.Printf(logging.ERROR, "| %s | %s lookup failed for plugin: invalid function type", data.ID, decisionCheckFuncionName)
+				continue
+			}
+
+			reloadFunc, err := p.Lookup(decisionReloadFunctionName)
+			if err != nil {
+				logger.Printf(logging.ERROR, "| %s | cannot load plugin %s function: %v", data.ID, decisionReloadFunctionName, err)
+				continue
+			}
+			reload, ok := reloadFunc.(func(map[string]string, metric.Meter) error)
+			if !ok {
+				logger.Printf(logging.ERROR, "| %s | %s lookup failed for plugin: invalid function type", data.ID, decisionReloadFunctionName)
+				continue
+			}
+
+			decisionPluginLoaded := decisionPlugin{p, checkResults, reload}
+			pm.decisionPlugins[data.ID] = decisionPluginLoaded
+		} else {
+			err = dp.reload(data.Params, meter)
+			if err != nil {
+				logger.Printf(logging.WARN, "| %s | cannot reload plugin: %s", data.ID, err.Error())
+				continue
+			}
 		}
-		f, err := tp.Lookup("InitPlugin")
-		if err != nil {
-			logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
-			continue
-		}
-		initPlugin, ok := f.(func(map[string]string, metric.Meter) error)
-		if !ok {
-			logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid InitPlugin function type", data.ID)
-			continue
-		}
-		err = initPlugin(data.Params, meter)
-		if err != nil {
-			logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
-			continue
-		}
-		cR, err := tp.Lookup("CheckResults")
-		if err != nil {
-			logger.Printf(logging.ERROR, "| %s | cannot load plugin check results function: %v", data.ID, err)
-			continue
-		}
-		checkResults, ok := cR.(func(DecisionInput) (bool, error))
-		if !ok {
-			logger.Printf(logging.ERROR, "| %s | CheckResults lookup failed for plugin: invalid function type", data.ID)
-			continue
-		}
-		pm.decisionCheckFunc[data.ID] = checkResults
-		decisionPluginLoaded := decisionPlugin{tp}
-		pm.decisionPlugins[data.ID] = decisionPluginLoaded
 	}
-	return pm, nil
+	return nil
 }
 
 // InitTransaction initializes the transaction with the given ID
@@ -321,14 +405,16 @@ func (p *PluginManager) Process(modelID, transactionId string, payload HTTPPaylo
 		return nil
 	}
 
-	process := p.modelProcessFunc[modelID]
+	mp, ok := p.modelPlugins[modelID]
+	if !ok {
+		return fmt.Errorf("Model plugin %s not found", modelID)
+	}
 
 	if conf.ModelPlugins[modelID].Mode == "async" {
 		modelPlugStatus <- ModelStatus{ModelID: modelID, Err: fmt.Errorf("model plugin is async")}
 		return nil
 	} else {
-		res, err := process(ModelInput{TransactionId: transactionId, Payload: payload})
-		// res, err := process(transactionId, payload)
+		res, err := mp.process(ModelInput{TransactionId: transactionId, Payload: payload})
 
 		if err != nil {
 			modelPlugStatus <- ModelStatus{ModelID: modelID, Err: err}
@@ -351,7 +437,7 @@ func (p *PluginManager) Process(modelID, transactionId string, payload HTTPPaylo
 func (p *PluginManager) CheckResult(transactionId, decisionId string, wafParams map[string]string) (bool, error) {
 	logger := logging.Get()
 
-	checkResults, ok := p.decisionCheckFunc[decisionId]
+	dp, ok := p.decisionPlugins[decisionId]
 	if !ok {
 		return false, fmt.Errorf("decision plugin not found")
 	}
@@ -374,7 +460,7 @@ func (p *PluginManager) CheckResult(transactionId, decisionId string, wafParams 
 		return true
 	})
 
-	res, err := checkResults(DecisionInput{TransactionId: transactionId, Results: modelResultMap, ModelWeight: modelWeightMap, WAFdata: wafParams})
+	res, err := dp.checkResults(DecisionInput{TransactionId: transactionId, Results: modelResultMap, ModelWeight: modelWeightMap, WAFdata: wafParams})
 	logger.TPrintf(logging.INFO, transactionId, "%s | transaction checked. Block: %t ", decisionId, res)
 
 	return res, err

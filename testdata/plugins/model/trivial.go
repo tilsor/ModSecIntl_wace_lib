@@ -41,3 +41,10 @@ func Process(input pm.ModelInput) (pm.ModelResults, error) {
 	}
 	return result, nil
 }
+
+// ReloadPlugin reload the plugin (does nothing in this case)
+func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+	logger := lg.Get()
+	logger.Printf(lg.WARN, "[trivial:ReloadPlugin] %v\n", params)
+	return nil
+}

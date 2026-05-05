@@ -5,6 +5,7 @@ package main
 
 import (
 	lg "github.com/tilsor/ModSecIntl_logging/logging"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // InitPlugin intitalizes the plugins (does nothing in this case)
@@ -18,4 +19,9 @@ func InitPlugin(params map[string]string) error {
 // in other case.
 func CheckResults() (bool, error) {
 	return false, nil
+}
+
+// ReloadPlugin reload the plugin
+func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+	return nil
 }
