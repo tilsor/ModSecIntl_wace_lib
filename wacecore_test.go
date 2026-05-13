@@ -1,6 +1,7 @@
 package wace
 
 import (
+	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -31,9 +32,10 @@ var requestHeaders = []pluginmanager.HTTPHeader{
 }
 
 var requestHeadersPayload = pluginmanager.HTTPPayload{
-	URI:         requestURI,
-	Method:      requestMethod,
-	HTTPVersion: requestVersion,
+	URI:            requestURI,
+	Method:         requestMethod,
+	HTTPVersion:    requestVersion,
+	RequestHeaders: requestHeaders,
 }
 
 var requestBody = "licenseID=string&content=string&/paramsXML=string\n"
@@ -228,49 +230,10 @@ decisionplugins:
     decisionbalance: 0.1
 `)
 
-// var configRoberta = []byte(`---
-// logpath: "/dev/null"
-// loglevel: DEBUG
-// listenport: "50051"
-// modelplugins:
-//   - id: "trivial"
-//     path: "testdata/plugins/model/trivial.so"
-//     weight: 1
-//     threshold: 0.5
-//     params:
-//       d: "sds"
-//       b: "dnid"
-//       e: "dofnno"
-//     # plugintype: "RequestHeaders"
-//     plugintype: "Everything"
-//   - id: "trivial2"
-//     path: "testdata/plugins/model/trivial2.so"
-//     weight: 2
-//     threshold: 0.1
-//     params:
-//       a: "sdsds"
-//       b: "sdfjdnid"
-//       c: "kfoskdofnno"
-//     plugintype: "Everything"
-//   - id: "roberta"
-//     path: "testdata/plugins/model/roberta.so"
-//     weight: 1
-//     threshold: 0.5
-//     params:
-//       url: "localhost:9999"
-//       distance_threshold: -0.02
-//     plugintype: "AllRequest"
-// decisionplugins:
-//   - id: "simple"
-//     path: "testdata/plugins/decision/simple.so"
-//     wafweight: 0.5
-//     decisionbalance: 0.5
-// `)
-
 var provider = metric.NewMeterProvider()
 var testMeter = provider.Meter("example-meter")
 
-func initilize(configuration []byte) error {
+func initialize(configuration []byte) error {
 	var aux configstore.ConfigFileData
 	err := yaml.Unmarshal(configuration, &aux)
 	if err != nil {
@@ -310,7 +273,7 @@ func TestAnalyze(t *testing.T) {
 			config: configAllModels,
 			steps: []step{
 				{"RequestHeaders", requestHeadersPayload, []string{"trivialRequestHeaders"}},
-				{"RequestBody", pluginmanager.HTTPPayload{ResponseBody: requestBody}, []string{"trivialRequestBody"}},
+				{"RequestBody", pluginmanager.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
 			},
 		},
 		{
@@ -350,7 +313,7 @@ func TestAnalyze(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := initilize(tt.config)
+			err := initialize(tt.config)
 			defer configstore.Clean()
 			if err != nil {
 				t.Fatalf("Error initing test: %v", err)
@@ -387,7 +350,7 @@ func TestCheckInvalidTransaction(t *testing.T) {
 }
 
 func TestCheckAttackTransaction(t *testing.T) {
-	err := initilize(configSyncNoRemote)
+	err := initialize(configSyncNoRemote)
 	defer configstore.Clean()
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
@@ -421,7 +384,7 @@ func TestCheckAttackTransaction(t *testing.T) {
 }
 
 func TestAnalyzeInvalidType(t *testing.T) {
-	err := initilize(configAllModels)
+	err := initialize(configAllModels)
 	defer configstore.Clean()
 	if err != nil {
 		t.Fatalf("Error initing test: %v", err)
@@ -437,8 +400,45 @@ func TestAnalyzeInvalidType(t *testing.T) {
 	}
 }
 
+// TestInitDuplicate covers the configstore.New() error branch in Init: calling
+// Init a second time without Clean in between must return an error.
+func TestInitDuplicate(t *testing.T) {
+	err := initialize(config)
+	if err != nil {
+		t.Fatalf("first initialize: %v", err)
+	}
+	defer configstore.Clean()
+
+	err = initialize(config)
+	if err == nil {
+		t.Error("second Init without Clean should return error")
+	}
+}
+
+// TestInitInvalidConfig covers the SetConfig error branch in Init: a config
+// referencing a nonexistent plugin path must cause Init to return an error.
+func TestInitInvalidConfig(t *testing.T) {
+	badConfig := []byte(`---
+logpath: "/dev/null"
+loglevel: "ERROR"
+modelplugins:
+  - id: "missing"
+    path: "testdata/plugins/model/does_not_exist.so"
+    plugintype: "Everything"
+`)
+	var aux configstore.ConfigFileData
+	if err := yaml.Unmarshal(badConfig, &aux); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	err := Init(testMeter, aux)
+	configstore.Clean()
+	if err == nil {
+		t.Error("Init with nonexistent plugin path should return error")
+	}
+}
+
 func TestCloseNonexistentTransaction(t *testing.T) {
-	err := initilize(configAllModels)
+	err := initialize(configAllModels)
 	defer configstore.Clean()
 	if err != nil {
 		t.Fatalf("Error initing test: %v", err)
@@ -449,7 +449,7 @@ func TestCloseNonexistentTransaction(t *testing.T) {
 }
 
 func TestCheckNonexistentDecisionPlugin(t *testing.T) {
-	err := initilize(configAllModels)
+	err := initialize(configAllModels)
 	defer configstore.Clean()
 	if err != nil {
 		t.Fatalf("Error initing test: %v", err)
@@ -465,53 +465,165 @@ func TestCheckNonexistentDecisionPlugin(t *testing.T) {
 	}
 }
 
-// func TestAnalyzeStress(t *testing.T) {
-// 	for i := 0; i < 1000; i++ {
-// 		transactionID := generateRandomID()
-// 		AnalyzeRequest(transactionID, wholeRequest, []string{"trivial", "trivial2"})
-// 		_, err := CheckTransaction(transactionID, "simple", make(map[string]string))
-// 		if err != nil {
-// 			t.Errorf("checkTransaction error: %v", err)
-// 		}
-// 	}
+// parseWAFParams parses a comma-separated "key=value" string into a map.
+func parseWAFParams(s string) map[string]string {
+	params := make(map[string]string)
+	for _, pair := range strings.Split(s, ",") {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 {
+			params[parts[0]] = parts[1]
+		}
+	}
+	return params
+}
 
-// }
+func TestCheckTransactionResult(t *testing.T) {
+	blockingWAF := parseWAFParams("inbound_blocking=20,inbound_threshold=5")
+	noAlertWAF := parseWAFParams("inbound_blocking=0,inbound_threshold=5")
 
-// func processRequest(models []string) error {
-// 	transactionID := generateRandomID()
+	tests := []struct {
+		name      string
+		config    []byte
+		models    []string
+		wafParams map[string]string
+		wantBlock bool
+	}{
+		{
+			name:      "trivial2 (prob=1.0) with alerting WAF blocks",
+			config:    configSyncNoRemote,
+			models:    []string{"trivial2"},
+			wafParams: blockingWAF,
+			wantBlock: true,
+		},
+		{
+			name:      "trivial (prob=0.0) with alerting WAF does not block",
+			config:    configSyncNoRemote,
+			models:    []string{"trivial"},
+			wafParams: blockingWAF,
+			wantBlock: false,
+		},
+		{
+			name:      "trivial2 with non-alerting WAF does not block",
+			config:    configSyncNoRemote,
+			models:    []string{"trivial2"},
+			wafParams: noAlertWAF,
+			wantBlock: false,
+		},
+		{
+			name:      "empty models list never blocks",
+			config:    configSyncNoRemote,
+			models:    []string{},
+			wafParams: blockingWAF,
+			wantBlock: false,
+		},
+	}
 
-// 	res := AnalyzeRequest(transactionID, wholeRequest, models)
-// 	if res != 0 {
-// 		return errors.New("analyzeRequest returned non-zero")
-// 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := initialize(tt.config)
+			defer configstore.Clean()
+			if err != nil {
+				t.Fatalf("initialize: %v", err)
+			}
 
-// 	_, err := CheckTransaction(transactionID, "simple",
-// 		map[string]string{"anomalyscore": "1",
-// 			"inboundthreshold": "100"})
-// 	return err
-// }
+			txID := generateRandomID()
+			InitTransaction(txID)
+			defer CloseTransaction(txID)
 
-// func TestRoberta(t *testing.T) {
-// 	conf := cf.Get()
-// 	err := conf.LoadConfigYaml(configRoberta)
-// 	if err != nil {
-// 		panic("Error loading config: " + err.Error())
-// 	}
+			if len(tt.models) > 0 {
+				if err := Analyze("RequestHeaders", txID, requestHeadersPayload, tt.models); err != nil {
+					t.Fatalf("Analyze: %v", err)
+				}
+			}
 
-// 	err = processRequest([]string{"roberta"})
-// 	if err != nil {
-// 		t.Errorf("callRoberta error: %v", err)
-// 	}
-// }
+			blocked, err := CheckTransaction(txID, "simple", tt.wafParams)
+			if err != nil {
+				t.Fatalf("CheckTransaction: %v", err)
+			}
+			if blocked != tt.wantBlock {
+				t.Errorf("blocked = %v, want %v", blocked, tt.wantBlock)
+			}
+		})
+	}
+}
 
-// func BenchmarkRoberta(b *testing.B) {
-// 	for i := 0; i < b.N; i++ {
-// 		processRequest([]string{"roberta"})
-// 	}
-// }
+func TestAnalyzeMultiPhase(t *testing.T) {
+	err := initialize(configAllModels)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	txID := generateRandomID()
+	InitTransaction(txID)
+	defer CloseTransaction(txID)
+
+	phases := []struct {
+		payloadType string
+		payload     pluginmanager.HTTPPayload
+		models      []string
+	}{
+		{"RequestHeaders", requestHeadersPayload, []string{"trivialRequestHeaders"}},
+		{"RequestBody", pluginmanager.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
+		{"ResponseHeaders", responseHeadersPayload, []string{"trivialResponseHeaders"}},
+		{"ResponseBody", pluginmanager.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
+	}
+
+	for _, p := range phases {
+		if err := Analyze(p.payloadType, txID, p.payload, p.models); err != nil {
+			t.Errorf("Analyze(%s): %v", p.payloadType, err)
+		}
+	}
+
+	_, err = CheckTransaction(txID, "simple", make(map[string]string))
+	if err != nil {
+		t.Errorf("CheckTransaction after multi-phase analysis: %v", err)
+	}
+}
+
+func TestConcurrentTransactions(t *testing.T) {
+	err := initialize(configSyncNoRemote)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	wafParams := parseWAFParams("inbound_blocking=20,inbound_threshold=5")
+
+	const goroutines = 20
+	errs := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			txID := generateRandomID()
+			InitTransaction(txID)
+
+			if err := Analyze("RequestHeaders", txID, requestHeadersPayload, []string{"trivial", "trivial2"}); err != nil {
+				errs <- fmt.Errorf("Analyze: %w", err)
+				CloseTransaction(txID)
+				return
+			}
+
+			if _, err := CheckTransaction(txID, "simple", wafParams); err != nil {
+				errs <- fmt.Errorf("CheckTransaction: %w", err)
+				CloseTransaction(txID)
+				return
+			}
+
+			CloseTransaction(txID)
+			errs <- nil
+		}()
+	}
+
+	for i := 0; i < goroutines; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent transaction error: %v", err)
+		}
+	}
+}
 
 func BenchmarkTrivial(b *testing.B) {
-	err := initilize(configSyncNoRemote)
+	err := initialize(configSyncNoRemote)
 	defer configstore.Clean()
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)
@@ -538,7 +650,7 @@ func BenchmarkTrivial(b *testing.B) {
 }
 
 func BenchmarkTrivialFullNATS(b *testing.B) {
-	err := initilize(configSyncRemote)
+	err := initialize(configSyncRemote)
 	defer configstore.Clean()
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)

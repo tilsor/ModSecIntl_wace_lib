@@ -81,11 +81,9 @@ type modelPluginConfig struct {
 
 // DecisionPluginConfig stores the configuration of a decision plugin
 type decisionPluginConfig struct {
-	ID              string
-	Path            string
-	WAFweight       float64
-	DecisionBalance float64
-	Params          map[string]string
+	ID     string
+	Path   string
+	Params map[string]string
 }
 
 // ConfigStore stores all wacecore configuration from the config file.
@@ -134,11 +132,9 @@ type configFileModelPlugin struct {
 }
 
 type configFileDecisionPlugin struct {
-	ID              string
-	Path            string
-	wafweight       float64
-	decisionbalance float64
-	Params          map[string]string
+	ID     string
+	Path   string
+	Params map[string]string
 }
 
 type ConfigFileData struct {
@@ -245,8 +241,6 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		var decisionConfig decisionPluginConfig
 		decisionConfig.ID = decisionP.ID
 		decisionConfig.Path = decisionP.Path
-		decisionConfig.WAFweight = decisionP.wafweight
-		decisionConfig.DecisionBalance = decisionP.decisionbalance
 		decisionConfig.Params = decisionP.Params
 		cs.DecisionPlugins[decisionConfig.ID] = decisionConfig
 	}

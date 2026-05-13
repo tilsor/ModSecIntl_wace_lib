@@ -521,6 +521,17 @@ modelplugins:
 	}
 }
 
+func TestGetBeforeNew(t *testing.T) {
+	// ensure clean state
+	Clean()
+
+	_, err := Get()
+	if err == nil {
+		t.Error("Get() before New() should return error")
+	}
+}
+
+
 func TestNatsURL(t *testing.T) {
 	tests := []struct {
 		name    string
