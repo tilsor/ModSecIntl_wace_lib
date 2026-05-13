@@ -293,134 +293,90 @@ func generateRandomID() string {
 	return id
 }
 
-func TestAnalyzeRequestInParts(t *testing.T) {
-	err := initilize(configAllModels)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
+func TestAnalyze(t *testing.T) {
+	type step struct {
+		payloadType string
+		payload     pluginmanager.HTTPPayload
+		plugins     []string
+	}
+	tests := []struct {
+		name      string
+		config    []byte
+		steps     []step
+		postDelay time.Duration
+	}{
+		{
+			name:   "request in parts",
+			config: configAllModels,
+			steps: []step{
+				{"RequestHeaders", requestHeadersPayload, []string{"trivialRequestHeaders"}},
+				{"RequestBody", pluginmanager.HTTPPayload{ResponseBody: requestBody}, []string{"trivialRequestBody"}},
+			},
+		},
+		{
+			name:   "whole request",
+			config: configAllModels,
+			steps: []step{
+				{"AllRequest", wholeRequest, []string{"trivialAllRequest"}},
+			},
+		},
+		{
+			name:   "response in parts",
+			config: configAllModels,
+			steps: []step{
+				{"ResponseHeaders", responseHeadersPayload, []string{"trivialResponseHeaders"}},
+				{"ResponseBody", pluginmanager.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
+			},
+		},
+		{
+			name:   "whole response",
+			config: configAllModels,
+			steps: []step{
+				{"AllResponse", wholeResponse, []string{"trivialAllResponse"}},
+			},
+		},
+		{
+			name:      "request in parts async",
+			config:    configAsync,
+			steps:     []step{{"RequestHeaders", requestHeadersPayload, []string{"trivial", "trivial2"}}},
+			postDelay: 10 * time.Millisecond,
+		},
+		{
+			name:   "empty models list is a no-op",
+			config: configAllModels,
+			steps:  []step{},
+		},
 	}
 
-	transactionID := generateRandomID()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := initilize(tt.config)
+			defer configstore.Clean()
+			if err != nil {
+				t.Fatalf("Error initing test: %v", err)
+			}
 
-	InitTransaction(transactionID)
+			transactionID := generateRandomID()
+			InitTransaction(transactionID)
 
-	res := Analyze("RequestHeaders", transactionID, requestHeadersPayload, []string{"trivialRequestHeaders"})
-	if res != nil {
-		t.Errorf("Error: Analyze RequestHeaders: %s", res.Error())
+			for _, s := range tt.steps {
+				if err := Analyze(s.payloadType, transactionID, s.payload, s.plugins); err != nil {
+					t.Errorf("Analyze %s: %v", s.payloadType, err)
+				}
+			}
+
+			_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
+			if err != nil {
+				t.Errorf("CheckTransaction: %v", err)
+			}
+
+			CloseTransaction(transactionID)
+
+			if tt.postDelay > 0 {
+				time.Sleep(tt.postDelay)
+			}
+		})
 	}
-	res = Analyze("RequestBody", transactionID, pluginmanager.HTTPPayload{ResponseBody: requestBody}, []string{"trivialRequestBody"})
-	if res != nil {
-		t.Errorf("Error: Analyze RequestBody: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-}
-
-func TestAnalyzeWholeRequest(t *testing.T) {
-	err := initilize(configAllModels)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
-	}
-
-	transactionID := generateRandomID()
-
-	InitTransaction(transactionID)
-
-	res := Analyze("AllRequest", transactionID, wholeRequest, []string{"trivialAllRequest"})
-	if res != nil {
-		t.Errorf("Error: Analyze AllRequest: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-}
-
-func TestAnalyzeResponseInParts(t *testing.T) {
-	err := initilize(configAllModels)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
-	}
-
-	transactionID := generateRandomID()
-
-	InitTransaction(transactionID)
-
-	res := Analyze("ResponseHeaders", transactionID, responseHeadersPayload, []string{"trivialResponseHeaders"})
-	if res != nil {
-		t.Errorf("Error: Analyze ResponseHeaders: %s", res.Error())
-	}
-	res = Analyze("ResponseBody", transactionID, pluginmanager.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"})
-	if res != nil {
-		t.Errorf("Error: Analyze ResponseBody: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-}
-
-func TestAnalyzeWholeResponse(t *testing.T) {
-	err := initilize(configAllModels)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
-	}
-
-	transactionID := generateRandomID()
-
-	InitTransaction(transactionID)
-
-	res := Analyze("AllResponse", transactionID, wholeResponse, []string{"trivialAllResponse"})
-	if res != nil {
-		t.Errorf("Error: Analyze AllResponse: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-}
-
-func TestAnalyzeRequestInPartsAsync(t *testing.T) {
-	err := initilize(configAsync)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
-	}
-
-	transactionID := generateRandomID()
-
-	InitTransaction(transactionID)
-
-	res := Analyze("RequestHeaders", transactionID, requestHeadersPayload, []string{"trivial", "trivial2"})
-	if res != nil {
-		t.Errorf("Error: Analyze RequestHeaders: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-
-	time.Sleep(10 * time.Millisecond)
 }
 
 func TestCheckInvalidTransaction(t *testing.T) {
@@ -462,6 +418,51 @@ func TestCheckAttackTransaction(t *testing.T) {
 	}
 
 	CloseTransaction(transactionID)
+}
+
+func TestAnalyzeInvalidType(t *testing.T) {
+	err := initilize(configAllModels)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("Error initing test: %v", err)
+	}
+
+	transactionID := generateRandomID()
+	InitTransaction(transactionID)
+	defer CloseTransaction(transactionID)
+
+	err = Analyze("InvalidType", transactionID, requestHeadersPayload, []string{"trivialRequestHeaders"})
+	if err == nil {
+		t.Errorf("Analyze with invalid type should return error")
+	}
+}
+
+func TestCloseNonexistentTransaction(t *testing.T) {
+	err := initilize(configAllModels)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("Error initing test: %v", err)
+	}
+
+	// should log an error but not panic
+	CloseTransaction("NONEXISTENT")
+}
+
+func TestCheckNonexistentDecisionPlugin(t *testing.T) {
+	err := initilize(configAllModels)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("Error initing test: %v", err)
+	}
+
+	transactionID := generateRandomID()
+	InitTransaction(transactionID)
+	defer CloseTransaction(transactionID)
+
+	_, err = CheckTransaction(transactionID, "nonexistent_plugin", make(map[string]string))
+	if err == nil {
+		t.Errorf("CheckTransaction with nonexistent decision plugin should return error")
+	}
 }
 
 // func TestAnalyzeStress(t *testing.T) {

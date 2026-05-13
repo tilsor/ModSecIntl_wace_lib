@@ -103,175 +103,464 @@ func TestLoadConfigYamlInvalid(t *testing.T) {
 }
 
 func TestLoadConfigYamlLogLevel(t *testing.T) {
-	_, err := New()
-	if err != nil {
-		t.Error(err)
+	tests := []struct {
+		level   string
+		wantErr bool
+	}{
+		{"a", true},
+		{"4", true},
+		{"0", true},
+		{"DEBUG", false},
+		{"INFO", false},
+		{"WARN", false},
+		{"ERROR", false},
 	}
 
-	defer Clean()
+	for _, tt := range tests {
+		t.Run(tt.level, func(t *testing.T) {
+			_, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
 
-	values := []string{
-		"a",
-		"4",
-		"0",
-	}
-
-	for _, v := range values {
-		config := `---
-logpath: "/dev/null"
-loglevel: ` + v
-		err = initialize([]byte(config))
-		if err == nil {
-			t.Errorf("invalid log level %v does not return error", v)
-		}
+			config := "---\nlogpath: \"/dev/null\"\nloglevel: " + tt.level
+			err = initialize([]byte(config))
+			if (err != nil) != tt.wantErr {
+				if tt.wantErr {
+					t.Errorf("log level %q should return error but did not", tt.level)
+				} else {
+					t.Errorf("log level %q returned unexpected error: %v", tt.level, err)
+				}
+			}
+		})
 	}
 }
 
 func TestLoadConfigYamlPluginType(t *testing.T) {
-	cs, err := New()
-	if err != nil {
-		t.Error(err)
-	}
-
-	defer Clean()
-
-	err = initialize([]byte(`---
+	tests := []struct {
+		name     string
+		config   string
+		wantErr  bool
+		wantType string
+	}{
+		{
+			name: "invalid plugin type",
+			config: `---
 loglevel: ERROR
 logpath: /dev/null
 modelplugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
     plugintype: InvalidPluginType
-`))
-	if err == nil {
-		t.Errorf("invalid plugin type does not return error")
-	}
-
-	err = initialize([]byte(`---
+`,
+			wantErr: true,
+		},
+		{
+			name: "empty plugin type",
+			config: `---
 loglevel: ERROR
 logpath: /dev/null
 modelplugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
     plugintype: ""
-`))
-	if err == nil {
-		t.Errorf("empty plugin type does not return error")
-	}
-
-	err = initialize([]byte(`---
+`,
+			wantErr: true,
+		},
+		{
+			name: "nonexistent model plugin path",
+			config: `---
 loglevel: ERROR
 logpath: /dev/null
 modelplugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/nonexistent.so"
     plugintype: "RequestHeaders"
-`))
-	if err == nil {
-		t.Errorf("nonexistent model plugin path does not return error")
-	}
-
-	err = initialize([]byte(`---
+`,
+			wantErr: true,
+		},
+		{
+			name: "empty model plugin path",
+			config: `---
 loglevel: ERROR
 logpath: /dev/null
 modelplugins:
   - id: "testplugin"
     path: ""
     plugintype: "RequestHeaders"
-`))
-	if err == nil {
-		t.Errorf("empty plugin path does not return error")
-	}
-
-	err = initialize([]byte(`---
+`,
+			wantErr: true,
+		},
+		{
+			name: "empty decision plugin path",
+			config: `---
 loglevel: ERROR
 logpath: /dev/null
 decisionplugins:
   - id: "test"
     path: ""
-`))
-	if err == nil {
-		t.Errorf("empty decision plugin path does not return error")
-	}
-
-	err = initialize([]byte(`---
+`,
+			wantErr: true,
+		},
+		{
+			name: "nonexistent decision plugin path",
+			config: `---
 loglevel: ERROR
 logpath: /dev/null
 decisionplugins:
   - id: "testplugin"
     path: "../testdata/plugins/decision/nonexistent.so"
-`))
-	if err == nil {
-		t.Errorf("nonexistent decision plugin path does not return error")
-	}
-
-	values := []string{
-		"RequestHeaders",
-		"RequestBody",
-		"AllRequest",
-		"ResponseHeaders",
-		"ResponseBody",
-		"AllResponse",
-		"Everything",
-	}
-
-	for _, v := range values {
-		config := `---
+`,
+			wantErr: true,
+		},
+		{
+			name: "valid RequestHeaders",
+			config: `---
 loglevel: ERROR
 logpath: /dev/null
 modelplugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "` + v + `"
-`
-		err = initialize([]byte(config))
-		if err != nil {
-			t.Errorf("Plugin type %s returns error: %v", v, err)
-		}
+    plugintype: "RequestHeaders"
+`,
+			wantType: "RequestHeaders",
+		},
+		{
+			name: "valid RequestBody",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "RequestBody"
+`,
+			wantType: "RequestBody",
+		},
+		{
+			name: "valid AllRequest",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "AllRequest"
+`,
+			wantType: "AllRequest",
+		},
+		{
+			name: "valid ResponseHeaders",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "ResponseHeaders"
+`,
+			wantType: "ResponseHeaders",
+		},
+		{
+			name: "valid ResponseBody",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "ResponseBody"
+`,
+			wantType: "ResponseBody",
+		},
+		{
+			name: "valid AllResponse",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "AllResponse"
+`,
+			wantType: "AllResponse",
+		},
+		{
+			name: "valid Everything",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "Everything"
+`,
+			wantType: "Everything",
+		},
+	}
 
-		if fmt.Sprint(cs.ModelPlugins["testplugin"].PluginType) != v {
-			t.Errorf("Stored plugin type is %v, expected %v", cs.ModelPlugins["testplugin"].PluginType, v)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
+
+			err = initialize([]byte(tt.config))
+			if (err != nil) != tt.wantErr {
+				if tt.wantErr {
+					t.Errorf("expected error but got none")
+				} else {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if tt.wantType != "" {
+				if got := fmt.Sprint(cs.ModelPlugins["testplugin"].PluginType); got != tt.wantType {
+					t.Errorf("plugin type = %q, want %q", got, tt.wantType)
+				}
+			}
+		})
 	}
 }
 
 func TestInvalidLogging(t *testing.T) {
-	_, err := New()
-	if err != nil {
-		t.Error(err)
-	}
-
-	defer Clean()
-
-	err = initialize([]byte(`---
+	tests := []struct {
+		name    string
+		config  string
+		cleanup func(t *testing.T)
+		wantErr bool
+	}{
+		{
+			name: "invalid log level",
+			config: `---
 loglevel: INVALIDLOGLEVEL
 logpath: /dev/null
-`))
-	if err == nil {
-		t.Errorf("invalid log level does not return error")
-	}
-
-	if _, err = os.Stat("./configstore_test.log"); err == nil {
-		err = os.Remove("./configstore_test.log")
-		if err != nil {
-			t.Errorf("could not remove ./configstore_test.log")
-		}
-	}
-
-	err = initialize([]byte(`---
+`,
+			wantErr: true,
+		},
+		{
+			name: "writable log path",
+			config: `---
 loglevel: ERROR
-logpath: ./configstore_test.log`))
+logpath: ./configstore_test.log`,
+			cleanup: func(t *testing.T) {
+				if _, err := os.Stat("./configstore_test.log"); err == nil {
+					if err := os.Remove("./configstore_test.log"); err != nil {
+						t.Errorf("could not remove ./configstore_test.log")
+					}
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name: "inaccessible log path",
+			config: `---
+loglevel: ERROR
+logpath: /usr/configstore_test.log`,
+			wantErr: true,
+		},
+	}
 
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
+			if tt.cleanup != nil {
+				defer tt.cleanup(t)
+			}
+
+			err = initialize([]byte(tt.config))
+			if (err != nil) != tt.wantErr {
+				if tt.wantErr {
+					t.Errorf("expected error but got none")
+				} else {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestNewGetCleanLifecycle(t *testing.T) {
+	cs1, err := New()
 	if err != nil {
-		t.Errorf("Error loading config  with nonexistent file: %v", err)
+		t.Fatalf("New() failed: %v", err)
 	}
 
-	err = initialize([]byte(`---
-loglevel: ERROR
-logpath: /usr/configstore_test.log`))
+	cs2, err := Get()
+	if err != nil {
+		t.Fatalf("Get() after New() failed: %v", err)
+	}
+	if cs1 != cs2 {
+		t.Errorf("Get() returned a different instance than New()")
+	}
 
+	Clean()
+
+	_, err = Get()
 	if err == nil {
-		t.Errorf("non existent log file in directory without permissions does not rise error")
+		t.Errorf("Get() after Clean() should return error")
+	}
+}
+
+func TestNewDuplicate(t *testing.T) {
+	_, err := New()
+	if err != nil {
+		t.Fatalf("first New() failed: %v", err)
+	}
+	defer Clean()
+
+	_, err = New()
+	if err == nil {
+		t.Errorf("second New() should return error when instance already exists")
+	}
+}
+
+func TestStringToPluginType(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    ModelPluginType
+		wantErr bool
+	}{
+		{"RequestHeaders", "RequestHeaders", RequestHeaders, false},
+		{"RequestBody", "RequestBody", RequestBody, false},
+		{"AllRequest", "AllRequest", AllRequest, false},
+		{"ResponseHeaders", "ResponseHeaders", ResponseHeaders, false},
+		{"ResponseBody", "ResponseBody", ResponseBody, false},
+		{"AllResponse", "AllResponse", AllResponse, false},
+		{"Everything", "Everything", Everything, false},
+		{"invalid value", "invalid", 0, true},
+		{"empty string", "", 0, true},
+		{"wrong case", "requestheaders", 0, true},
 	}
 
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := StringToPluginType(tt.input)
+			if (err != nil) != tt.wantErr {
+				if tt.wantErr {
+					t.Errorf("StringToPluginType(%q) should return error but did not", tt.input)
+				} else {
+					t.Errorf("StringToPluginType(%q) returned unexpected error: %v", tt.input, err)
+				}
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("StringToPluginType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestModelPluginTypeString(t *testing.T) {
+	tests := []struct {
+		pluginType ModelPluginType
+		want       string
+	}{
+		{RequestHeaders, "RequestHeaders"},
+		{RequestBody, "RequestBody"},
+		{AllRequest, "AllRequest"},
+		{ResponseHeaders, "ResponseHeaders"},
+		{ResponseBody, "ResponseBody"},
+		{AllResponse, "AllResponse"},
+		{Everything, "Everything"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := tt.pluginType.String(); got != tt.want {
+				t.Errorf("ModelPluginType(%d).String() = %q, want %q", int(tt.pluginType), got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsAsync(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      string
+		wantAsync bool
+	}{
+		{"sync mode", "sync", false},
+		{"async mode", "async", true},
+		{"empty mode defaults to sync", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
+
+			config := fmt.Sprintf(`---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "RequestHeaders"
+    mode: "%s"
+`, tt.mode)
+			if err := initialize([]byte(config)); err != nil {
+				t.Fatalf("initialize failed: %v", err)
+			}
+
+			if got := cs.IsAsync("testplugin"); got != tt.wantAsync {
+				t.Errorf("IsAsync with mode %q = %v, want %v", tt.mode, got, tt.wantAsync)
+			}
+		})
+	}
+}
+
+func TestNatsURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantURL string
+	}{
+		{
+			name: "defaults to localhost:4222",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+`,
+			wantURL: "localhost:4222",
+		},
+		{
+			name: "stores custom URL",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+natsurl: "nats.example.com:4222"
+`,
+			wantURL: "nats.example.com:4222",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
+
+			if err := initialize([]byte(tt.config)); err != nil {
+				t.Fatalf("initialize failed: %v", err)
+			}
+
+			if cs.NatsURL != tt.wantURL {
+				t.Errorf("NatsURL = %q, want %q", cs.NatsURL, tt.wantURL)
+			}
+		})
+	}
 }
