@@ -136,6 +136,15 @@ func New(meter metric.Meter) (*PluginManager, error) {
 	return pm, nil
 }
 
+// Reload reloads the configuration for all already-loaded plugins and loads any
+// newly added plugins from the current configstore state.
+func (pm *PluginManager) Reload(meter metric.Meter) error {
+	if err := pm.loadModelPlugins(meter); err != nil {
+		return err
+	}
+	return pm.loadDecisionPlugins(meter)
+}
+
 // loadModelPlugins load new Plugins and reload their configuration if they previously existed
 func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 	conf, err := configstore.Get()
