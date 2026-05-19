@@ -248,6 +248,24 @@ func CloseTransaction(transactionID string) {
 	}
 }
 
+// Reload applies a new configuration and reloads all plugins.
+func Reload(met metric.Meter, conf configstore.ConfigFileData) error {
+	logger := logging.Get()
+
+	cs, err := configstore.Get()
+	if err != nil {
+		return err
+	}
+	if err = cs.SetConfig(conf); err != nil {
+		return err
+	}
+	if err = logger.LoadLogger(cs.LogPath, cs.LogLevel); err != nil {
+		return err
+	}
+	meter = met
+	return plugins.Reload(met)
+}
+
 // Init initializes the WACE core with the given metric meter
 func Init(met metric.Meter, conf configstore.ConfigFileData) error {
 	logger := logging.Get()

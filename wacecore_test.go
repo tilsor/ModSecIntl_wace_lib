@@ -622,6 +622,54 @@ func TestConcurrentTransactions(t *testing.T) {
 	}
 }
 
+// configParamWith returns a YAML config using param.so with the given result value.
+func configParamWith(result string) []byte {
+	return []byte(`---
+logpath: "/dev/null"
+loglevel: "WARN"
+modelplugins:
+  - id: "param"
+    path: "testdata/plugins/model/param.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+    params:
+      result: "` + result + `"
+decisionplugins:
+  - id: "simple"
+    path: "testdata/plugins/decision/simple.so"
+    decisionbalance: 0.5
+`)
+}
+
+// TestReload verifies that Reload succeeds and that transactions still work
+// correctly after it.
+func TestReload(t *testing.T) {
+	if err := initialize(configParamWith("0.3")); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	defer configstore.Clean()
+
+	var newConf configstore.ConfigFileData
+	if err := yaml.Unmarshal(configParamWith("0.8"), &newConf); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := Reload(testMeter, newConf); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	// Transactions must still complete successfully after a reload.
+	txID := generateRandomID()
+	InitTransaction(txID)
+	defer CloseTransaction(txID)
+	if err := Analyze("Everything", txID, pluginmanager.HTTPPayload{URI: "/test"}, []string{"param"}); err != nil {
+		t.Fatalf("Analyze after Reload: %v", err)
+	}
+	if _, err := CheckTransaction(txID, "simple", make(map[string]string)); err != nil {
+		t.Fatalf("CheckTransaction after Reload: %v", err)
+	}
+}
+
 func BenchmarkTrivial(b *testing.B) {
 	err := initialize(configSyncNoRemote)
 	defer configstore.Clean()
