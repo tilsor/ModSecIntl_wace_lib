@@ -88,3 +88,8 @@ func CheckResults(decisionInput pm.DecisionInput) (bool, error) {
 	logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "weighted_sum | weighted sum: %v threshold: %v", weightedSum, threshold)
 	return weightedSum > threshold, nil
 }
+
+// ReloadPlugin reload the plugin
+func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+	return nil
+}

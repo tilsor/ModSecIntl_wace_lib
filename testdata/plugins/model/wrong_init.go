@@ -3,6 +3,8 @@
 
 package main
 
+import "go.opentelemetry.io/otel/metric"
+
 // InitPlugin intitalizes the plugins (does nothing in this case)
 func InitPlugin() error {
 	return nil
@@ -11,4 +13,9 @@ func InitPlugin() error {
 // Process always returns 0 probability of attack
 func Process() (float64, error) {
 	return 0.0, nil
+}
+
+// ReloadPlugin reload the plugin
+func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+	return nil
 }

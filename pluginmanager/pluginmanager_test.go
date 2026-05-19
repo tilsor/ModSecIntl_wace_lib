@@ -1,28 +1,39 @@
-package pluginmanager
+package pluginmanager_test
 
 import (
 	"math/rand"
+	"testing"
 	"time"
 
+	"github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
+	"github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"gopkg.in/yaml.v3"
-
-	"github.com/tilsor/ModSecIntl_logging/logging"
 )
 
 var baseConfig = `---
-logpath: "/tmp/wacetmp.log"
+logpath: "/dev/null"
 loglevel: "WARN"
 `
 
 var trivialPlugin = `  - id: "trivial"
     path: "../testdata/plugins/model/trivial.so"
     weight: 1
-    params:
-      param1: "first value"
-      param2: "second value"
-      param3: "third value"
+    plugintype: "Everything"
+    mode: sync
+`
+
+var trivial2Plugin = `  - id: "trivial2"
+    path: "../testdata/plugins/model/trivial2.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+`
+
+var errorReqPlugin = `  - id: "error_req"
+    path: "../testdata/plugins/model/error_req.so"
+    weight: 1
     plugintype: "Everything"
     mode: sync
 `
@@ -31,341 +42,489 @@ var testPlugin = `  - id: "test"
     path: "../testdata/plugins/decision/test.so"
     wafweight: 0.5
     decisionbalance: 0.5
-    params:
-      test1: "test"
-      test2: "testtest"
-      test3: "testtesttest"
 `
 
-func generateRandomID() string {
-	letters := "1234567890ABCDEF"
-	id := ""
-	for i := 0; i < 16; i++ {
-		id += string(letters[rand.Intn(len(letters))])
-	}
+var simplePlugin = `  - id: "simple"
+    path: "../testdata/plugins/decision/simple.so"
+    decisionbalance: 0.5
+`
 
-	return id
-}
+// Model plugins that fail to load (silently dropped by pluginmanager)
+var noInitPlugin = `  - id: "no_init"
+    path: "../testdata/plugins/model/no_init.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+`
+
+var wrongInitPlugin = `  - id: "wrong_init"
+    path: "../testdata/plugins/model/wrong_init.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+`
+
+var errorInitPlugin = `  - id: "error_init"
+    path: "../testdata/plugins/model/error_init.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+`
+
+var noReqPlugin = `  - id: "no_req"
+    path: "../testdata/plugins/model/no_req.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+`
+
+var wrongReqPlugin = `  - id: "wrong_req"
+    path: "../testdata/plugins/model/wrong_req.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+`
+
+// paramPlugin returns whatever float64 is stored in params["result"].
+// Its ReloadPlugin updates that value, so the output changes after a Reload.
+var paramPlugin = `  - id: "param"
+    path: "../testdata/plugins/model/param.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+    params:
+      result: "0.3"
+`
+
+// Decision plugins that fail to load (wrong InitPlugin signature)
+var noCheckPlugin = `  - id: "no_check"
+    path: "../testdata/plugins/decision/no_check.so"
+    decisionbalance: 0.5
+`
+
+var wrongCheckPlugin = `  - id: "wrong_check"
+    path: "../testdata/plugins/decision/wrong_check.so"
+    decisionbalance: 0.5
+`
 
 var provider = metric.NewMeterProvider()
-var testMeter = provider.Meter("example-meter")
-
-func initilize(configuration []byte) error {
-	var aux configstore.ConfigFileData
-	err := yaml.Unmarshal(configuration, &aux)
-	if err != nil {
-		return err
-	}
-	cs, err := configstore.Get()
-	if err != nil {
-		return err
-	}
-	err = cs.SetConfig(aux)
-	if err != nil {
-		return err
-	}
-	logger := logging.Get()
-
-	err = logger.LoadLogger(cs.LogPath, cs.LogLevel)
-	if err != nil {
-		return err
-
-	}
-	return nil
-}
+var testMeter = provider.Meter("pluginmanager-test-meter")
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-
 	logger := logging.Get()
-	err := logger.LoadLogger("/dev/null", logging.ERROR)
-	if err != nil {
-		panic("Error loading logger")
+	if err := logger.LoadLogger("/dev/null", logging.ERROR); err != nil {
+		panic("Error loading logger: " + err.Error())
 	}
 }
 
-// func TestPluginInit(t *testing.T) {
-// 	cases := []struct{ id, conf string }{
-// 		// 		{"invalid_path", `  - id: "invalid_path"
-// 		//     path: "../testdata/plugins/model/nonexistent.so"
-// 		//     plugintype: "AllRequest"
-// 		// `},
-// 		{"no_init", `  - id: "no_init"
-//     path: "../testdata/plugins/model/no_init.so"
-//     plugintype: "AllRequest"
-// `},
-// 		{"wrong_init", `  - id: "wrong_init"
-//     path: "../testdata/plugins/model/wrong_init.so"
-//     plugintype: "AllRequest"
-// `},
-// 		{"error_init", `  - id: "error_init"
-//     path: "../testdata/plugins/model/error_init.so"
-//     plugintype: "AllRequest"
-// `},
-// 	}
+func generateRandomID() string {
+	letters := "1234567890ABCDEF"
+	id := make([]byte, 16)
+	for i := range id {
+		id[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(id)
+}
 
-// 	// Test model plugin initialization
-// 	for _, c := range cases {
-// 		config := baseConfig + "modelplugins:\n" + trivialPlugin + c.conf
+// setupPluginManager creates a fresh ConfigStore from the given YAML config,
+// returns an initialised PluginManager, and registers configstore.Clean as a
+// test cleanup function.
+func setupPluginManager(t *testing.T, configuration []byte) *pluginmanager.PluginManager {
+	t.Helper()
+	configstore.Clean()
+	cs, err := configstore.New()
+	if err != nil {
+		t.Fatalf("configstore.New() failed: %v", err)
+	}
+	t.Cleanup(configstore.Clean)
 
-// 		err := initilize([]byte(config))
-// 		if err != nil {
-// 			t.Errorf("Error loading config: %v", err)
-// 		}
-// 		plugins := New(testMeter)
-// 		if _, exists := plugins.modelPlugins["trivial"]; !exists {
-// 			t.Errorf("trivial plugin not loaded")
-// 		}
-// 		if _, exists := plugins.modelPlugins[c.id]; exists {
-// 			t.Errorf(c.id + " should not load")
-// 		}
-// 	}
+	var aux configstore.ConfigFileData
+	if err := yaml.Unmarshal(configuration, &aux); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+	if err := cs.SetConfig(aux); err != nil {
+		t.Fatalf("SetConfig failed: %v", err)
+	}
+	logger := logging.Get()
+	if err := logger.LoadLogger(cs.LogPath, cs.LogLevel); err != nil {
+		t.Fatalf("LoadLogger failed: %v", err)
+	}
+	pm, err := pluginmanager.New(testMeter)
+	if err != nil {
+		t.Fatalf("pluginmanager.New() failed: %v", err)
+	}
+	return pm
+}
 
-// 	// Test decision plugin initialization
-// 	for _, c := range cases {
-// 		config := baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + testPlugin + c.conf
+func TestPluginManagerNew(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + testPlugin)
+	pm := setupPluginManager(t, config)
+	if pm == nil {
+		t.Fatal("New() returned nil plugin manager")
+	}
+}
 
-// 		err := initilize([]byte(config))
-// 		if err != nil {
-// 			t.Errorf("Error loading config: %v", err)
-// 		}
-// 		plugins := New(testMeter)
-// 		if _, exists := plugins.decisionPlugins["test"]; !exists {
-// 			t.Errorf("test plugin not loaded")
-// 		}
-// 		if _, exists := plugins.decisionPlugins[c.id]; exists {
-// 			t.Errorf(c.id + " should not load")
-// 		}
-// 	}
+func TestPluginManagerProcessSync(t *testing.T) {
+	tests := []struct {
+		name      string
+		modelConf string
+		modelID   string
+		wantProb  float64
+		wantErr   bool
+	}{
+		{
+			name:      "trivial returns zero probability",
+			modelConf: trivialPlugin,
+			modelID:   "trivial",
+			wantProb:  0.0,
+		},
+		{
+			name:      "trivial2 returns full attack probability",
+			modelConf: trivial2Plugin,
+			modelID:   "trivial2",
+			wantProb:  1.0,
+		},
+		{
+			name:      "error_req plugin reports error via channel",
+			modelConf: errorReqPlugin,
+			modelID:   "error_req",
+			wantErr:   true,
+		},
+	}
 
-// }
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := []byte(baseConfig + "modelplugins:\n" + tt.modelConf)
+			pm := setupPluginManager(t, config)
 
-// func TestPluginParams(t *testing.T) {
-// 	config := baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + testPlugin
+			txID := generateRandomID()
+			pm.InitTransaction(txID)
+			defer pm.CloseTransaction(txID)
 
-// 	err := initilize([]byte(config))
-// 	if err != nil {
-// 		t.Errorf("Error loading config: %v", err)
-// 	}
+			ch := make(chan pluginmanager.ModelStatus, 1)
+			go pm.Process(tt.modelID, txID, pluginmanager.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+			status := <-ch
 
-// 	var buf bytes.Buffer
-// 	logger := lg.Get()
-// 	err = logger.LoadLoggerWriter(&buf, lg.INFO)
-// 	if err != nil {
-// 		t.Errorf("Error loading logger: %v", err)
-// 	}
+			if (status.Err != nil) != tt.wantErr {
+				if tt.wantErr {
+					t.Errorf("Process(%q) expected error but got none", tt.modelID)
+				} else {
+					t.Errorf("Process(%q) unexpected error: %v", tt.modelID, status.Err)
+				}
+			}
+			if !tt.wantErr && status.ProbAttack != tt.wantProb {
+				t.Errorf("Process(%q) ProbAttack = %f, want %f", tt.modelID, status.ProbAttack, tt.wantProb)
+			}
+		})
+	}
+}
 
-// 	plugins := New(testMeter)
+func TestPluginManagerProcessNonexistentPlugin(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin)
+	pm := setupPluginManager(t, config)
 
-// 	if !strings.Contains(buf.String(), "[trivial:InitPlugin] map[param1:first value param2:second value param3:third value]") {
-// 		t.Errorf("trivial plugin did not initialize correctly, got: %v, expected: %v", buf.String(), "[trivial:InitPlugin] map[param1:first value param2:second value param3:third value]")
-// 	}
-// 	if !strings.Contains(buf.String(), "[test:InitPlugin] map[test1:test test2:testtest test3:testtesttest]") {
-// 		t.Errorf("test plugin did not initialize correctly")
-// 	}
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
 
-// 	transactionID := generateRandomID()
-// 	modelPlugStatus := make(chan ModelStatus)
-// 	go plugins.Process("trivial", transactionID, "test request1", cf.AllRequest, modelPlugStatus)
-// 	<-modelPlugStatus
-// 	if !strings.Contains(buf.String(), "[trivial:ProcessRequest] \"test request1\"") {
-// 		t.Errorf("trivial plugin did not analyze request")
-// 	}
+	ch := make(chan pluginmanager.ModelStatus, 1)
+	go pm.Process("nonexistent", txID, pluginmanager.HTTPPayload{}, configstore.Everything, ch)
+	status := <-ch
+	if status.Err == nil {
+		t.Error("Process with nonexistent plugin ID should return error via channel")
+	}
+}
 
-// 	go plugins.Process("trivial", transactionID, "test response1", cf.AllResponse, modelPlugStatus)
-// 	<-modelPlugStatus
-// 	if !strings.Contains(buf.String(), "[trivial:ProcessResponse] \"test response1\"") {
-// 		t.Errorf("trivial plugin did not analyze response")
-// 	}
+func TestPluginManagerCheckResult(t *testing.T) {
+	tests := []struct {
+		name      string
+		modelConf string
+		modelID   string
+		wafParams map[string]string
+		wantBlock bool
+	}{
+		{
+			name:      "trivial (prob=0.0) does not block even with alerting WAF",
+			modelConf: trivialPlugin,
+			modelID:   "trivial",
+			wafParams: map[string]string{"inbound_blocking": "20", "inbound_threshold": "5"},
+			wantBlock: false,
+		},
+		{
+			name:      "trivial2 (prob=1.0) blocks when WAF also alerts",
+			modelConf: trivial2Plugin,
+			modelID:   "trivial2",
+			wafParams: map[string]string{"inbound_blocking": "20", "inbound_threshold": "5"},
+			wantBlock: true,
+		},
+		{
+			name:      "trivial2 does not block with empty WAF data",
+			modelConf: trivial2Plugin,
+			modelID:   "trivial2",
+			wafParams: make(map[string]string),
+			wantBlock: false,
+		},
+	}
 
-// 	_, err = plugins.CheckResult(transactionID, "test", map[string]string{"anomalyscore": "100", "inboundthreshold": "10"})
-// 	if err != nil {
-// 		t.Errorf("Error checking result: %v", err)
-// 	}
-// 	if !strings.Contains(buf.String(), "[test:CheckResults]") {
-// 		t.Errorf("test plugin did not execute correctly")
-// 	}
-// 	if !strings.Contains(buf.String(), "modelRes: map[trivial:") {
-// 		t.Errorf("trivial result is not stored in modelRes")
-// 	}
-// 	if !strings.Contains(buf.String(), "modelWeight: map[trivial:1]") {
-// 		t.Errorf("trivial weight is not stored in modelWeight")
-// 	}
-// 	if !strings.Contains(buf.String(), "modelThres: map[trivial:0.5]") {
-// 		t.Errorf("trivial threshold is not stored in modelWeight")
-// 	}
-// 	if !strings.Contains(buf.String(), "wafData: map[anomalyscore:100 inboundthreshold:10]") {
-// 		t.Errorf("waf params are not stored in wafData")
-// 	}
-// }
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := []byte(baseConfig + "modelplugins:\n" + tt.modelConf + "decisionplugins:\n" + simplePlugin)
+			pm := setupPluginManager(t, config)
 
-// func TestPluginType(t *testing.T) {
-// 	cases := []struct {
-// 		id                      string
-// 		pluginType, requestType cf.ModelPluginType
-// 		executes                bool
-// 	}{
-// 		{"req_headers-req_headers", cf.RequestHeaders, cf.RequestHeaders, true},
-// 		{"req_headers-resp_headers", cf.RequestHeaders, cf.ResponseHeaders, false},
-// 		{"req_headers-all_req", cf.RequestHeaders, cf.AllRequest, false},
-// 		{"all_req-req_headers", cf.AllRequest, cf.RequestHeaders, false},
-// 		{"all_req-all_resp", cf.AllRequest, cf.AllResponse, false},
+			txID := generateRandomID()
+			pm.InitTransaction(txID)
+			defer pm.CloseTransaction(txID)
 
-// 		{"resp_headers-resp_headers", cf.ResponseHeaders, cf.ResponseHeaders, true},
-// 		{"resp_headers-req_headers", cf.ResponseHeaders, cf.RequestHeaders, false},
-// 		{"resp_headers-all_resp", cf.ResponseHeaders, cf.AllResponse, false},
-// 		{"all_resp-resp_headers", cf.AllResponse, cf.ResponseHeaders, false},
-// 		{"all_resp-all_req", cf.AllResponse, cf.AllRequest, false},
+			ch := make(chan pluginmanager.ModelStatus, 1)
+			go pm.Process(tt.modelID, txID, pluginmanager.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+			<-ch
 
-// 		{"everything-req_headers", cf.Everything, cf.RequestHeaders, true},
-// 		{"everything-all_req", cf.Everything, cf.AllRequest, true},
-// 		{"everything-resp_body", cf.Everything, cf.ResponseBody, true},
-// 		{"everything-all_resp", cf.Everything, cf.AllResponse, true},
-// 	}
+			result, err := pm.CheckResult(txID, "simple", tt.wafParams)
+			if err != nil {
+				t.Fatalf("CheckResult error: %v", err)
+			}
+			if result != tt.wantBlock {
+				t.Errorf("CheckResult = %v, want %v", result, tt.wantBlock)
+			}
+		})
+	}
+}
 
-// 	for _, c := range cases {
-// 		config := baseConfig + "modelplugins:\n" +
-// 			"  - id: \"" + c.id + "\"\n" +
-// 			"    path: \"../testdata/plugins/model/trivial.so\"\n" +
-// 			"    plugintype: \"" + c.pluginType.String() + "\"\n"
+func TestPluginManagerCheckResultNonexistentDecision(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + testPlugin)
+	pm := setupPluginManager(t, config)
 
-// 		err := initilize([]byte(config))
-// 		if err != nil {
-// 			t.Errorf("Error loading config: %v", err)
-// 		}
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
 
-// 		old := log.Writer()
-// 		var buf bytes.Buffer
-// 		log.SetOutput(&buf)
-// 		defer log.SetOutput(old)
+	_, err := pm.CheckResult(txID, "nonexistent", make(map[string]string))
+	if err == nil {
+		t.Error("CheckResult with nonexistent decision plugin should return error")
+	}
+}
 
-// 		plugins := New(testMeter)
+func TestPluginManagerTransactionLifecycle(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + testPlugin)
+	pm := setupPluginManager(t, config)
 
-// 		transactionID := generateRandomID()
-// 		modelPlugStatus := make(chan ModelStatus)
-// 		switch c.requestType {
-// 		case cf.RequestHeaders, cf.RequestBody, cf.AllRequest:
-// 			go plugins.Process(c.id, transactionID, "test request", c.requestType, modelPlugStatus)
-// 			<-modelPlugStatus
-// 			if strings.Contains(buf.String(), "[trivial:ProcessRequest] \"test request\"") != c.executes {
-// 				t.Errorf("case %s: expected to run trivial plugin: %v", c.id, c.executes)
-// 			}
-// 			if _, exists := plugins.results.Load(transactionID); exists != c.executes {
-// 				t.Errorf("case %s: expected to store results: %v", c.id, c.executes)
-// 			}
-// 		case cf.ResponseHeaders, cf.ResponseBody, cf.AllResponse:
-// 			go plugins.Process(c.id, transactionID, "test response", c.requestType, modelPlugStatus)
-// 			<-modelPlugStatus
-// 			if strings.Contains(buf.String(), "[trivial:ProcessResponse] \"test response\"") != c.executes {
-// 				t.Errorf("case %s: expected to run trivial plugin: %v", c.id, c.executes)
-// 			}
-// 			if _, exists := plugins.results.Load(transactionID); exists != c.executes {
-// 				t.Errorf("case %s: expected to store results: %v", c.id, c.executes)
-// 			}
-// 		}
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
 
-// 	}
-// }
+	ch := make(chan pluginmanager.ModelStatus, 1)
+	go pm.Process("trivial", txID, pluginmanager.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	status := <-ch
+	if status.Err != nil {
+		t.Fatalf("Process error: %v", status.Err)
+	}
 
-// func TestProcessRequestInvalid(t *testing.T) {
-// 	cases := []struct{ id, conf string }{
-// 		{"no_req", `  - id: "no_req"
-//     path: "../testdata/plugins/model/no_req.so"
-//     plugintype: "Everything"
-// `},
-// 		{"wrong_req", `  - id: "wrong_req"
-//     path: "../testdata/plugins/model/wrong_req.so"
-//     plugintype: "Everything"
-// `},
-// 		{"error_req", `  - id: "error_req"
-//     path: "../testdata/plugins/model/error_req.so"
-//     plugintype: "Everything"
-// `},
-// 	}
+	// test plugin blocks when anomalyscore >= inboundthreshold
+	result, err := pm.CheckResult(txID, "test", map[string]string{"anomalyscore": "100", "inboundthreshold": "10"})
+	if err != nil {
+		t.Fatalf("CheckResult error: %v", err)
+	}
+	if !result {
+		t.Error("expected transaction to be blocked (anomalyscore 100 >= inboundthreshold 10)")
+	}
 
-// 	// Test model plugin initialization
-// 	for _, c := range cases {
-// 		config := baseConfig + "modelplugins:\n" + trivialPlugin + c.conf
+	pm.CloseTransaction(txID)
+}
 
-// 		err := initilize([]byte(config))
-// 		if err != nil {
-// 			t.Errorf("Error loading config: %v", err)
-// 		}
-// 		plugins := New(testMeter)
+// TestPluginManagerLoadModelFailures checks that New() succeeds even when model
+// plugins fail to load (due to missing/wrong Init or Process symbols), and that
+// those plugins are not available for processing.
+func TestPluginManagerLoadModelFailures(t *testing.T) {
+	tests := []struct {
+		name      string
+		modelConf string
+		modelID   string
+	}{
+		{"no InitPlugin symbol", noInitPlugin, "no_init"},
+		{"wrong InitPlugin signature", wrongInitPlugin, "wrong_init"},
+		{"InitPlugin returns error", errorInitPlugin, "error_init"},
+		{"no Process symbol", noReqPlugin, "no_req"},
+		{"wrong Process signature", wrongReqPlugin, "wrong_req"},
+	}
 
-// 		transactionID := generateRandomID()
-// 		modelPlugStatus := make(chan ModelStatus)
-// 		go plugins.Process(c.id, transactionID, "test request", cf.AllRequest, modelPlugStatus)
-// 		<-modelPlugStatus
-// 		go plugins.Process(c.id, transactionID, "test response", cf.AllResponse, modelPlugStatus)
-// 		<-modelPlugStatus
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := []byte(baseConfig + "modelplugins:\n" + tt.modelConf)
+			pm := setupPluginManager(t, config)
+			if pm == nil {
+				t.Fatal("New() returned nil — expected success even with bad plugin")
+			}
 
-// 		if _, exists := plugins.results.Load(transactionID); exists {
-// 			t.Errorf("invalid test %s stored a result", c.id)
-// 		}
-// 	}
+			// The bad plugin must have been dropped: Process should return an error.
+			txID := generateRandomID()
+			pm.InitTransaction(txID)
+			defer pm.CloseTransaction(txID)
 
-// 	config := baseConfig + "modelplugins:\n" + trivialPlugin
+			ch := make(chan pluginmanager.ModelStatus, 1)
+			go pm.Process(tt.modelID, txID, pluginmanager.HTTPPayload{}, configstore.Everything, ch)
+			status := <-ch
+			if status.Err == nil {
+				t.Errorf("Process(%q): expected error (plugin should not have been loaded)", tt.modelID)
+			}
+		})
+	}
+}
 
-// 	err := initilize([]byte(config))
-// 	if err != nil {
-// 		t.Errorf("Error loading config: %v", err)
-// 	}
-// 	plugins := New(testMeter)
+// TestPluginManagerLoadDecisionFailures checks that New() succeeds even when
+// decision plugins fail to load (wrong InitPlugin signature), and that those
+// plugins are not available for CheckResult.
+func TestPluginManagerLoadDecisionFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		decConf    string
+		decisionID string
+	}{
+		{"no CheckResults symbol", noCheckPlugin, "no_check"},
+		{"wrong CheckResults signature", wrongCheckPlugin, "wrong_check"},
+	}
 
-// 	transactionID := generateRandomID()
-// 	modelPlugStatus := make(chan ModelStatus)
-// 	go plugins.Process("nonexistent", transactionID, "test request", cf.AllRequest, modelPlugStatus)
-// 	<-modelPlugStatus
-// 	go plugins.Process("nonexistent", transactionID, "test response", cf.AllResponse, modelPlugStatus)
-// 	<-modelPlugStatus
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + tt.decConf)
+			pm := setupPluginManager(t, config)
+			if pm == nil {
+				t.Fatal("New() returned nil — expected success even with bad decision plugin")
+			}
 
-// 	if _, exists := plugins.results.Load(transactionID); exists {
-// 		t.Errorf("nonexistent test stored a result")
-// 	}
+			txID := generateRandomID()
+			pm.InitTransaction(txID)
+			defer pm.CloseTransaction(txID)
 
-// }
+			_, err := pm.CheckResult(txID, tt.decisionID, make(map[string]string))
+			if err == nil {
+				t.Errorf("CheckResult(%q): expected error (plugin should not have been loaded)", tt.decisionID)
+			}
+		})
+	}
+}
 
-// func TestCheckResultInvalid(t *testing.T) {
-// 	cases := []struct{ id, conf string }{
-// 		{"no_check", `  - id: "no_check"
-//     path: "../testdata/plugins/decision/no_check.so"
-// `},
-// 		{"wrong_check", `  - id: "wrong_check"
-//     path: "../testdata/plugins/decision/wrong_check.so"
-// `},
-// 		{"error_check", `  - id: "error_check"
-//     path: "../testdata/plugins/decision/error_check.so"
-// `},
-// 	}
+// TestPluginManagerReload exercises the already-loaded-plugin branch in
+// loadModelPlugins / loadDecisionPlugins (the `found == true` path).
+func TestPluginManagerReload(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + simplePlugin)
+	pm := setupPluginManager(t, config)
 
-// 	// Test model plugin initialization
-// 	for _, c := range cases {
-// 		config := baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + c.conf
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload() returned error: %v", err)
+	}
 
-// 		err := initilize([]byte(config))
-// 		if err != nil {
-// 			t.Errorf("Error loading config: %v", err)
-// 		}
-// 		plugins := New(testMeter)
+	// Plugin must still be functional after reload.
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
 
-// 		_, err = plugins.CheckResult(generateRandomID(), c.id, make(map[string]string))
-// 		if err == nil {
-// 			t.Errorf("invalid CheckResult %s did not rise an error", c.id)
-// 		}
-// 	}
+	ch := make(chan pluginmanager.ModelStatus, 1)
+	go pm.Process("trivial", txID, pluginmanager.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	status := <-ch
+	if status.Err != nil {
+		t.Errorf("Process after Reload: unexpected error: %v", status.Err)
+	}
+	if status.ProbAttack != 0.0 {
+		t.Errorf("Process after Reload: ProbAttack = %f, want 0.0", status.ProbAttack)
+	}
+}
 
-// 	config := baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + testPlugin
+// TestPluginManagerProcessTypeMismatch verifies that Process sends an error
+// when the plugin's registered type does not match the requested type.
+func TestPluginManagerProcessTypeMismatch(t *testing.T) {
+	// Configure trivial as RequestHeaders type.
+	conf := baseConfig + `modelplugins:
+  - id: "trivial"
+    path: "../testdata/plugins/model/trivial.so"
+    weight: 1
+    plugintype: "RequestHeaders"
+    mode: sync
+`
+	pm := setupPluginManager(t, []byte(conf))
 
-// 	err := initilize([]byte(config))
-// 	if err != nil {
-// 		t.Errorf("Error loading config: %v", err)
-// 	}
-// 	plugins := New(testMeter)
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
 
-// 	_, err = plugins.CheckResult(generateRandomID(), "nonexitent", make(map[string]string))
-// 	if err == nil {
-// 		t.Errorf("nonexistent plugin did not rise an error")
-// 	}
+	// Pass Everything — does not match the registered RequestHeaders type.
+	ch := make(chan pluginmanager.ModelStatus, 1)
+	go pm.Process("trivial", txID, pluginmanager.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	status := <-ch
+	if status.Err == nil {
+		t.Error("Process with mismatched plugin type should return error via channel")
+	}
+}
 
-// }
+// TestPluginManagerReloadChangesOutput verifies that after Reload the plugin
+// picks up new params and returns a different ProbAttack value.
+// param.so is configured with result=0.3; after updating the configstore to
+// result=0.8 and calling Reload, Process must return 0.8.
+func TestPluginManagerReloadChangesOutput(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + paramPlugin)
+	pm := setupPluginManager(t, config)
+
+	runProcess := func(wantProb float64) {
+		t.Helper()
+		txID := generateRandomID()
+		pm.InitTransaction(txID)
+		defer pm.CloseTransaction(txID)
+
+		ch := make(chan pluginmanager.ModelStatus, 1)
+		go pm.Process("param", txID, pluginmanager.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+		status := <-ch
+		if status.Err != nil {
+			t.Errorf("Process: unexpected error: %v", status.Err)
+			return
+		}
+		if status.ProbAttack != wantProb {
+			t.Errorf("ProbAttack = %f, want %f", status.ProbAttack, wantProb)
+		}
+	}
+
+	runProcess(0.3)
+
+	// Update configstore so Reload picks up the new params.
+	updatedConfig := baseConfig + `modelplugins:
+  - id: "param"
+    path: "../testdata/plugins/model/param.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+    params:
+      result: "0.8"
+`
+	cs, err := configstore.Get()
+	if err != nil {
+		t.Fatalf("configstore.Get: %v", err)
+	}
+	var aux configstore.ConfigFileData
+	if err := yaml.Unmarshal([]byte(updatedConfig), &aux); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := cs.SetConfig(aux); err != nil {
+		t.Fatalf("SetConfig with updated params: %v", err)
+	}
+
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	runProcess(0.8)
+}
+
+// TestPluginManagerProcessWithoutTransaction verifies that Process sends an
+// error when the transaction was never initialised (results map is absent).
+func TestPluginManagerProcessWithoutTransaction(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin)
+	pm := setupPluginManager(t, config)
+
+	// Deliberately skip pm.InitTransaction so there is no results entry.
+	txID := generateRandomID()
+
+	ch := make(chan pluginmanager.ModelStatus, 1)
+	go pm.Process("trivial", txID, pluginmanager.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	status := <-ch
+	if status.Err == nil {
+		t.Error("Process without InitTransaction should return error via channel")
+	}
+}

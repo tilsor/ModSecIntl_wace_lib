@@ -14,3 +14,8 @@ func InitPlugin(params map[string]string, meter metric.Meter) error {
 func Process() (float64, error) {
 	return 0.0, nil
 }
+
+// ReloadPlugin reload the plugin
+func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+	return nil
+}

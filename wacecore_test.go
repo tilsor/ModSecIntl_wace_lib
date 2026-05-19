@@ -1,6 +1,7 @@
 package wace
 
 import (
+	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -31,9 +32,10 @@ var requestHeaders = []pluginmanager.HTTPHeader{
 }
 
 var requestHeadersPayload = pluginmanager.HTTPPayload{
-	URI:         requestURI,
-	Method:      requestMethod,
-	HTTPVersion: requestVersion,
+	URI:            requestURI,
+	Method:         requestMethod,
+	HTTPVersion:    requestVersion,
+	RequestHeaders: requestHeaders,
 }
 
 var requestBody = "licenseID=string&content=string&/paramsXML=string\n"
@@ -228,49 +230,10 @@ decisionplugins:
     decisionbalance: 0.1
 `)
 
-// var configRoberta = []byte(`---
-// logpath: "/dev/null"
-// loglevel: DEBUG
-// listenport: "50051"
-// modelplugins:
-//   - id: "trivial"
-//     path: "testdata/plugins/model/trivial.so"
-//     weight: 1
-//     threshold: 0.5
-//     params:
-//       d: "sds"
-//       b: "dnid"
-//       e: "dofnno"
-//     # plugintype: "RequestHeaders"
-//     plugintype: "Everything"
-//   - id: "trivial2"
-//     path: "testdata/plugins/model/trivial2.so"
-//     weight: 2
-//     threshold: 0.1
-//     params:
-//       a: "sdsds"
-//       b: "sdfjdnid"
-//       c: "kfoskdofnno"
-//     plugintype: "Everything"
-//   - id: "roberta"
-//     path: "testdata/plugins/model/roberta.so"
-//     weight: 1
-//     threshold: 0.5
-//     params:
-//       url: "localhost:9999"
-//       distance_threshold: -0.02
-//     plugintype: "AllRequest"
-// decisionplugins:
-//   - id: "simple"
-//     path: "testdata/plugins/decision/simple.so"
-//     wafweight: 0.5
-//     decisionbalance: 0.5
-// `)
-
 var provider = metric.NewMeterProvider()
 var testMeter = provider.Meter("example-meter")
 
-func initilize(configuration []byte) error {
+func initialize(configuration []byte) error {
 	var aux configstore.ConfigFileData
 	err := yaml.Unmarshal(configuration, &aux)
 	if err != nil {
@@ -293,134 +256,90 @@ func generateRandomID() string {
 	return id
 }
 
-func TestAnalyzeRequestInParts(t *testing.T) {
-	err := initilize(configAllModels)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
+func TestAnalyze(t *testing.T) {
+	type step struct {
+		payloadType string
+		payload     pluginmanager.HTTPPayload
+		plugins     []string
+	}
+	tests := []struct {
+		name      string
+		config    []byte
+		steps     []step
+		postDelay time.Duration
+	}{
+		{
+			name:   "request in parts",
+			config: configAllModels,
+			steps: []step{
+				{"RequestHeaders", requestHeadersPayload, []string{"trivialRequestHeaders"}},
+				{"RequestBody", pluginmanager.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
+			},
+		},
+		{
+			name:   "whole request",
+			config: configAllModels,
+			steps: []step{
+				{"AllRequest", wholeRequest, []string{"trivialAllRequest"}},
+			},
+		},
+		{
+			name:   "response in parts",
+			config: configAllModels,
+			steps: []step{
+				{"ResponseHeaders", responseHeadersPayload, []string{"trivialResponseHeaders"}},
+				{"ResponseBody", pluginmanager.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
+			},
+		},
+		{
+			name:   "whole response",
+			config: configAllModels,
+			steps: []step{
+				{"AllResponse", wholeResponse, []string{"trivialAllResponse"}},
+			},
+		},
+		{
+			name:      "request in parts async",
+			config:    configAsync,
+			steps:     []step{{"RequestHeaders", requestHeadersPayload, []string{"trivial", "trivial2"}}},
+			postDelay: 10 * time.Millisecond,
+		},
+		{
+			name:   "empty models list is a no-op",
+			config: configAllModels,
+			steps:  []step{},
+		},
 	}
 
-	transactionID := generateRandomID()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := initialize(tt.config)
+			defer configstore.Clean()
+			if err != nil {
+				t.Fatalf("Error initing test: %v", err)
+			}
 
-	InitTransaction(transactionID)
+			transactionID := generateRandomID()
+			InitTransaction(transactionID)
 
-	res := Analyze("RequestHeaders", transactionID, requestHeadersPayload, []string{"trivialRequestHeaders"})
-	if res != nil {
-		t.Errorf("Error: Analyze RequestHeaders: %s", res.Error())
+			for _, s := range tt.steps {
+				if err := Analyze(s.payloadType, transactionID, s.payload, s.plugins); err != nil {
+					t.Errorf("Analyze %s: %v", s.payloadType, err)
+				}
+			}
+
+			_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
+			if err != nil {
+				t.Errorf("CheckTransaction: %v", err)
+			}
+
+			CloseTransaction(transactionID)
+
+			if tt.postDelay > 0 {
+				time.Sleep(tt.postDelay)
+			}
+		})
 	}
-	res = Analyze("RequestBody", transactionID, pluginmanager.HTTPPayload{ResponseBody: requestBody}, []string{"trivialRequestBody"})
-	if res != nil {
-		t.Errorf("Error: Analyze RequestBody: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-}
-
-func TestAnalyzeWholeRequest(t *testing.T) {
-	err := initilize(configAllModels)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
-	}
-
-	transactionID := generateRandomID()
-
-	InitTransaction(transactionID)
-
-	res := Analyze("AllRequest", transactionID, wholeRequest, []string{"trivialAllRequest"})
-	if res != nil {
-		t.Errorf("Error: Analyze AllRequest: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-}
-
-func TestAnalyzeResponseInParts(t *testing.T) {
-	err := initilize(configAllModels)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
-	}
-
-	transactionID := generateRandomID()
-
-	InitTransaction(transactionID)
-
-	res := Analyze("ResponseHeaders", transactionID, responseHeadersPayload, []string{"trivialResponseHeaders"})
-	if res != nil {
-		t.Errorf("Error: Analyze ResponseHeaders: %s", res.Error())
-	}
-	res = Analyze("ResponseBody", transactionID, pluginmanager.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"})
-	if res != nil {
-		t.Errorf("Error: Analyze ResponseBody: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-}
-
-func TestAnalyzeWholeResponse(t *testing.T) {
-	err := initilize(configAllModels)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
-	}
-
-	transactionID := generateRandomID()
-
-	InitTransaction(transactionID)
-
-	res := Analyze("AllResponse", transactionID, wholeResponse, []string{"trivialAllResponse"})
-	if res != nil {
-		t.Errorf("Error: Analyze AllResponse: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-}
-
-func TestAnalyzeRequestInPartsAsync(t *testing.T) {
-	err := initilize(configAsync)
-	defer configstore.Clean()
-	if err != nil {
-		t.Errorf("Error initing test: %v", err)
-	}
-
-	transactionID := generateRandomID()
-
-	InitTransaction(transactionID)
-
-	res := Analyze("RequestHeaders", transactionID, requestHeadersPayload, []string{"trivial", "trivial2"})
-	if res != nil {
-		t.Errorf("Error: Analyze RequestHeaders: %s", res.Error())
-	}
-
-	_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
-	if err != nil {
-		t.Errorf("Error: CheckTransaction: %s", err.Error())
-	}
-
-	CloseTransaction(transactionID)
-
-	time.Sleep(10 * time.Millisecond)
 }
 
 func TestCheckInvalidTransaction(t *testing.T) {
@@ -431,7 +350,7 @@ func TestCheckInvalidTransaction(t *testing.T) {
 }
 
 func TestCheckAttackTransaction(t *testing.T) {
-	err := initilize(configSyncNoRemote)
+	err := initialize(configSyncNoRemote)
 	defer configstore.Clean()
 	if err != nil {
 		t.Errorf("Error initing test: %v", err)
@@ -464,53 +383,295 @@ func TestCheckAttackTransaction(t *testing.T) {
 	CloseTransaction(transactionID)
 }
 
-// func TestAnalyzeStress(t *testing.T) {
-// 	for i := 0; i < 1000; i++ {
-// 		transactionID := generateRandomID()
-// 		AnalyzeRequest(transactionID, wholeRequest, []string{"trivial", "trivial2"})
-// 		_, err := CheckTransaction(transactionID, "simple", make(map[string]string))
-// 		if err != nil {
-// 			t.Errorf("checkTransaction error: %v", err)
-// 		}
-// 	}
+func TestAnalyzeInvalidType(t *testing.T) {
+	err := initialize(configAllModels)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("Error initing test: %v", err)
+	}
 
-// }
+	transactionID := generateRandomID()
+	InitTransaction(transactionID)
+	defer CloseTransaction(transactionID)
 
-// func processRequest(models []string) error {
-// 	transactionID := generateRandomID()
+	err = Analyze("InvalidType", transactionID, requestHeadersPayload, []string{"trivialRequestHeaders"})
+	if err == nil {
+		t.Errorf("Analyze with invalid type should return error")
+	}
+}
 
-// 	res := AnalyzeRequest(transactionID, wholeRequest, models)
-// 	if res != 0 {
-// 		return errors.New("analyzeRequest returned non-zero")
-// 	}
+// TestInitDuplicate covers the configstore.New() error branch in Init: calling
+// Init a second time without Clean in between must return an error.
+func TestInitDuplicate(t *testing.T) {
+	err := initialize(config)
+	if err != nil {
+		t.Fatalf("first initialize: %v", err)
+	}
+	defer configstore.Clean()
 
-// 	_, err := CheckTransaction(transactionID, "simple",
-// 		map[string]string{"anomalyscore": "1",
-// 			"inboundthreshold": "100"})
-// 	return err
-// }
+	err = initialize(config)
+	if err == nil {
+		t.Error("second Init without Clean should return error")
+	}
+}
 
-// func TestRoberta(t *testing.T) {
-// 	conf := cf.Get()
-// 	err := conf.LoadConfigYaml(configRoberta)
-// 	if err != nil {
-// 		panic("Error loading config: " + err.Error())
-// 	}
+// TestInitInvalidConfig covers the SetConfig error branch in Init: a config
+// referencing a nonexistent plugin path must cause Init to return an error.
+func TestInitInvalidConfig(t *testing.T) {
+	badConfig := []byte(`---
+logpath: "/dev/null"
+loglevel: "ERROR"
+modelplugins:
+  - id: "missing"
+    path: "testdata/plugins/model/does_not_exist.so"
+    plugintype: "Everything"
+`)
+	var aux configstore.ConfigFileData
+	if err := yaml.Unmarshal(badConfig, &aux); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	err := Init(testMeter, aux)
+	configstore.Clean()
+	if err == nil {
+		t.Error("Init with nonexistent plugin path should return error")
+	}
+}
 
-// 	err = processRequest([]string{"roberta"})
-// 	if err != nil {
-// 		t.Errorf("callRoberta error: %v", err)
-// 	}
-// }
+func TestCloseNonexistentTransaction(t *testing.T) {
+	err := initialize(configAllModels)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("Error initing test: %v", err)
+	}
 
-// func BenchmarkRoberta(b *testing.B) {
-// 	for i := 0; i < b.N; i++ {
-// 		processRequest([]string{"roberta"})
-// 	}
-// }
+	// should log an error but not panic
+	CloseTransaction("NONEXISTENT")
+}
+
+func TestCheckNonexistentDecisionPlugin(t *testing.T) {
+	err := initialize(configAllModels)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("Error initing test: %v", err)
+	}
+
+	transactionID := generateRandomID()
+	InitTransaction(transactionID)
+	defer CloseTransaction(transactionID)
+
+	_, err = CheckTransaction(transactionID, "nonexistent_plugin", make(map[string]string))
+	if err == nil {
+		t.Errorf("CheckTransaction with nonexistent decision plugin should return error")
+	}
+}
+
+// parseWAFParams parses a comma-separated "key=value" string into a map.
+func parseWAFParams(s string) map[string]string {
+	params := make(map[string]string)
+	for _, pair := range strings.Split(s, ",") {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 {
+			params[parts[0]] = parts[1]
+		}
+	}
+	return params
+}
+
+func TestCheckTransactionResult(t *testing.T) {
+	blockingWAF := parseWAFParams("inbound_blocking=20,inbound_threshold=5")
+	noAlertWAF := parseWAFParams("inbound_blocking=0,inbound_threshold=5")
+
+	tests := []struct {
+		name      string
+		config    []byte
+		models    []string
+		wafParams map[string]string
+		wantBlock bool
+	}{
+		{
+			name:      "trivial2 (prob=1.0) with alerting WAF blocks",
+			config:    configSyncNoRemote,
+			models:    []string{"trivial2"},
+			wafParams: blockingWAF,
+			wantBlock: true,
+		},
+		{
+			name:      "trivial (prob=0.0) with alerting WAF does not block",
+			config:    configSyncNoRemote,
+			models:    []string{"trivial"},
+			wafParams: blockingWAF,
+			wantBlock: false,
+		},
+		{
+			name:      "trivial2 with non-alerting WAF does not block",
+			config:    configSyncNoRemote,
+			models:    []string{"trivial2"},
+			wafParams: noAlertWAF,
+			wantBlock: false,
+		},
+		{
+			name:      "empty models list never blocks",
+			config:    configSyncNoRemote,
+			models:    []string{},
+			wafParams: blockingWAF,
+			wantBlock: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := initialize(tt.config)
+			defer configstore.Clean()
+			if err != nil {
+				t.Fatalf("initialize: %v", err)
+			}
+
+			txID := generateRandomID()
+			InitTransaction(txID)
+			defer CloseTransaction(txID)
+
+			if len(tt.models) > 0 {
+				if err := Analyze("RequestHeaders", txID, requestHeadersPayload, tt.models); err != nil {
+					t.Fatalf("Analyze: %v", err)
+				}
+			}
+
+			blocked, err := CheckTransaction(txID, "simple", tt.wafParams)
+			if err != nil {
+				t.Fatalf("CheckTransaction: %v", err)
+			}
+			if blocked != tt.wantBlock {
+				t.Errorf("blocked = %v, want %v", blocked, tt.wantBlock)
+			}
+		})
+	}
+}
+
+func TestAnalyzeMultiPhase(t *testing.T) {
+	err := initialize(configAllModels)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	txID := generateRandomID()
+	InitTransaction(txID)
+	defer CloseTransaction(txID)
+
+	phases := []struct {
+		payloadType string
+		payload     pluginmanager.HTTPPayload
+		models      []string
+	}{
+		{"RequestHeaders", requestHeadersPayload, []string{"trivialRequestHeaders"}},
+		{"RequestBody", pluginmanager.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
+		{"ResponseHeaders", responseHeadersPayload, []string{"trivialResponseHeaders"}},
+		{"ResponseBody", pluginmanager.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
+	}
+
+	for _, p := range phases {
+		if err := Analyze(p.payloadType, txID, p.payload, p.models); err != nil {
+			t.Errorf("Analyze(%s): %v", p.payloadType, err)
+		}
+	}
+
+	_, err = CheckTransaction(txID, "simple", make(map[string]string))
+	if err != nil {
+		t.Errorf("CheckTransaction after multi-phase analysis: %v", err)
+	}
+}
+
+func TestConcurrentTransactions(t *testing.T) {
+	err := initialize(configSyncNoRemote)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	wafParams := parseWAFParams("inbound_blocking=20,inbound_threshold=5")
+
+	const goroutines = 20
+	errs := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			txID := generateRandomID()
+			InitTransaction(txID)
+
+			if err := Analyze("RequestHeaders", txID, requestHeadersPayload, []string{"trivial", "trivial2"}); err != nil {
+				errs <- fmt.Errorf("Analyze: %w", err)
+				CloseTransaction(txID)
+				return
+			}
+
+			if _, err := CheckTransaction(txID, "simple", wafParams); err != nil {
+				errs <- fmt.Errorf("CheckTransaction: %w", err)
+				CloseTransaction(txID)
+				return
+			}
+
+			CloseTransaction(txID)
+			errs <- nil
+		}()
+	}
+
+	for i := 0; i < goroutines; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent transaction error: %v", err)
+		}
+	}
+}
+
+// configParamWith returns a YAML config using param.so with the given result value.
+func configParamWith(result string) []byte {
+	return []byte(`---
+logpath: "/dev/null"
+loglevel: "WARN"
+modelplugins:
+  - id: "param"
+    path: "testdata/plugins/model/param.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: sync
+    params:
+      result: "` + result + `"
+decisionplugins:
+  - id: "simple"
+    path: "testdata/plugins/decision/simple.so"
+    decisionbalance: 0.5
+`)
+}
+
+// TestReload verifies that Reload succeeds and that transactions still work
+// correctly after it.
+func TestReload(t *testing.T) {
+	if err := initialize(configParamWith("0.3")); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	defer configstore.Clean()
+
+	var newConf configstore.ConfigFileData
+	if err := yaml.Unmarshal(configParamWith("0.8"), &newConf); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := Reload(testMeter, newConf); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	// Transactions must still complete successfully after a reload.
+	txID := generateRandomID()
+	InitTransaction(txID)
+	defer CloseTransaction(txID)
+	if err := Analyze("Everything", txID, pluginmanager.HTTPPayload{URI: "/test"}, []string{"param"}); err != nil {
+		t.Fatalf("Analyze after Reload: %v", err)
+	}
+	if _, err := CheckTransaction(txID, "simple", make(map[string]string)); err != nil {
+		t.Fatalf("CheckTransaction after Reload: %v", err)
+	}
+}
 
 func BenchmarkTrivial(b *testing.B) {
-	err := initilize(configSyncNoRemote)
+	err := initialize(configSyncNoRemote)
 	defer configstore.Clean()
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)
@@ -537,7 +698,7 @@ func BenchmarkTrivial(b *testing.B) {
 }
 
 func BenchmarkTrivialFullNATS(b *testing.B) {
-	err := initilize(configSyncRemote)
+	err := initialize(configSyncRemote)
 	defer configstore.Clean()
 	if err != nil {
 		b.Errorf("Error initing test: %v", err)
