@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	lg "github.com/tilsor/ModSecIntl_logging/logging"
-	pm "github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
+	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -35,16 +35,16 @@ func InitPlugin(params map[string]string, meter metric.Meter) error {
 	return nil
 }
 
-func InitPluginAsync(params map[string]string, meter metric.Meter, natsManager func(func(pm.ModelInput) (pm.ModelResults, error))) error {
+func InitPluginAsync(params map[string]string, meter metric.Meter, natsManager func(func(waceapi.ModelInput) (waceapi.ModelResults, error))) error {
 	InitPlugin(params, meter)
 	natsManager(Process)
 	return nil
 }
 
-func Process(input pm.ModelInput) (pm.ModelResults, error) {
+func Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
 	logger := lg.Get()
 	logger.TPrintf(lg.WARN, input.TransactionId, "[param:Process] \"%v\"\n", input.Payload)
-	return pm.ModelResults{
+	return waceapi.ModelResults{
 		ProbAttack: result,
 		Data:       make(map[string]interface{}),
 	}, nil

@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	lg "github.com/tilsor/ModSecIntl_logging/logging"
-	pm "github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
+	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -22,7 +22,7 @@ func InitPlugin(params map[string]string, meter metric.Meter) error {
 // CheckResults returns true (block traffic) if WAF says so, and false
 // in other case.
 // func CheckResults(transactionID string, modelRes map[string]float64, modelWeight map[string]float64, modelThres map[string]float64, wafData map[string]string) (bool, error) {
-func CheckResults(decisionInput pm.DecisionInput) (bool, error) {
+func CheckResults(decisionInput waceapi.DecisionInput) (bool, error) {
 	logger := lg.Get()
 
 	modelRes := decisionInput.Results

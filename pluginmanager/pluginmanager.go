@@ -11,68 +11,32 @@ import (
 	"sync"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
+	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/nats-io/nats.go"
 	"github.com/tilsor/ModSecIntl_logging/logging"
 )
 
-// ResultData maps the model plugin ID with the corresponding analysis result.
-type ModelResults struct {
-	ProbAttack float64                `json:"probattack"`
-	Data       map[string]interface{} `json:"data"`
-}
-
-type HTTPHeader struct {
-	Key   string
-	Value string
-}
-
-type HTTPPayload struct {
-	URI              string
-	Method           string
-	HTTPVersion      string
-	RequestHeaders   []HTTPHeader
-	RequestBody      string
-	ResponseProtocol string
-	ResponseCode     int
-	ResponseHeaders  []HTTPHeader
-	ResponseBody     string
-}
-
-// ModelInput is the struct that contains the input data for the model plugin
-type ModelInput struct {
-	TransactionId string      `json:"transactionId"`
-	Payload       HTTPPayload `json:"payload"`
-}
-
-// DecisionInput is the struct that contains the input data for the decision plugin
-type DecisionInput struct {
-	TransactionId string
-	Results       map[string]ModelResults
-	ModelWeight   map[string]float64
-	WAFdata       map[string]string
-}
-
 // ModelTransmitionResults is the struct that contains the results of the model plugin
 type ModelTransmitionResults struct {
-	TransactionId string `json:"transactionId"`
-	ModelResults  `json:",inline"`
-	Error         error `json:"error"`
+	TransactionId        string `json:"transactionId"`
+	waceapi.ModelResults `json:",inline"`
+	Error                error `json:"error"`
 }
 
 // modelPlugin is the struct that stores the model plugin and its type
 type modelPlugin struct {
 	p          *plugin.Plugin
 	pluginType configstore.ModelPluginType
-	process    func(ModelInput) (ModelResults, error)
+	process    func(waceapi.ModelInput) (waceapi.ModelResults, error)
 	reload     func(map[string]string, metric.Meter) error
 }
 
 // decisionPlugin is the struct that stores the decision plugin
 type decisionPlugin struct {
 	p            *plugin.Plugin
-	checkResults func(DecisionInput) (bool, error)
+	checkResults func(waceapi.DecisionInput) (bool, error)
 	reload       func(map[string]string, metric.Meter) error
 }
 
@@ -162,7 +126,7 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 				logger.Printf(logging.WARN, "| %s | cannot open plugin: %v", data.ID, err)
 				continue
 			}
-			var processFunc func(ModelInput) (ModelResults, error)
+			var processFunc func(waceapi.ModelInput) (waceapi.ModelResults, error)
 			// TODO: change mode to bool
 			if data.Mode == "async" || conf.ModelPlugins[data.ID].Remote {
 				f, err := p.Lookup(modelInitAsyncFunctionName)
@@ -170,14 +134,14 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 					logger.Printf(logging.WARN, "| %s | cannot load plugin: %v", data.ID, err)
 					continue
 				}
-				initPlugin, ok := f.(func(map[string]string, metric.Meter, func(func(ModelInput) (ModelResults, error))) error)
+				initPlugin, ok := f.(func(map[string]string, metric.Meter, func(func(waceapi.ModelInput) (waceapi.ModelResults, error))) error)
 				if !ok {
 					logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid %s function type", data.ID, modelInitAsyncFunctionName)
 					continue
 				}
 
 				// plugin initialization
-				err = initPlugin(data.Params, meter, func(modelProcess func(ModelInput) (ModelResults, error)) {
+				err = initPlugin(data.Params, meter, func(modelProcess func(waceapi.ModelInput) (waceapi.ModelResults, error)) {
 					ModelProcessHandler(data.ID, modelProcess)
 				})
 				if err != nil {
@@ -204,7 +168,7 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 					logger.Printf(logging.WARN, "| %s | cannot load plugin: cannot load %s function", data.ID, modelProcessFunctionName)
 					continue
 				}
-				processFunc, ok = procFunc.(func(ModelInput) (ModelResults, error))
+				processFunc, ok = procFunc.(func(waceapi.ModelInput) (waceapi.ModelResults, error))
 				if !ok {
 					logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid %s function type", data.ID, modelProcessFunctionName)
 					continue
@@ -273,7 +237,7 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 				logger.Printf(logging.ERROR, "| %s | cannot load plugin %s function: %v", data.ID, decisionCheckFuncionName, err)
 				continue
 			}
-			checkResults, ok := checkFunc.(func(DecisionInput) (bool, error))
+			checkResults, ok := checkFunc.(func(waceapi.DecisionInput) (bool, error))
 			if !ok {
 				logger.Printf(logging.ERROR, "| %s | %s lookup failed for plugin: invalid function type", data.ID, decisionCheckFuncionName)
 				continue
@@ -379,8 +343,8 @@ func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t configst
 }
 
 // AddToQueue adds a payload to the model queue
-func (p *PluginManager) AddToQueue(modelID, transactionID string, payload HTTPPayload) error {
-	payloadToSend := &ModelInput{
+func (p *PluginManager) AddToQueue(modelID, transactionID string, payload waceapi.HTTPPayload) error {
+	payloadToSend := &waceapi.ModelInput{
 		TransactionId: transactionID,
 		Payload:       payload,
 	}
@@ -395,7 +359,7 @@ func (p *PluginManager) AddToQueue(modelID, transactionID string, payload HTTPPa
 }
 
 // Process is in charge of calling the model plugin with id modelID
-func (p *PluginManager) Process(modelID, transactionId string, payload HTTPPayload, t configstore.ModelPluginType, modelPlugStatus chan ModelStatus) error {
+func (p *PluginManager) Process(modelID, transactionId string, payload waceapi.HTTPPayload, t configstore.ModelPluginType, modelPlugStatus chan ModelStatus) error {
 	conf, err := configstore.Get()
 	if err != nil {
 		return err
@@ -423,7 +387,7 @@ func (p *PluginManager) Process(modelID, transactionId string, payload HTTPPaylo
 		modelPlugStatus <- ModelStatus{ModelID: modelID, Err: fmt.Errorf("model plugin is async")}
 		return nil
 	} else {
-		res, err := mp.process(ModelInput{TransactionId: transactionId, Payload: payload})
+		res, err := mp.process(waceapi.ModelInput{TransactionId: transactionId, Payload: payload})
 
 		if err != nil {
 			modelPlugStatus <- ModelStatus{ModelID: modelID, Err: err}
@@ -461,15 +425,15 @@ func (p *PluginManager) CheckResult(transactionId, decisionId string, wafParams 
 		return false, nil
 	}
 
-	modelResultMap := make(map[string]ModelResults)
+	modelResultMap := make(map[string]waceapi.ModelResults)
 	modelWeightMap := make(map[string]float64)
 	transactionResults.(*sync.Map).Range(func(key, value interface{}) bool {
-		modelResultMap[key.(string)] = value.(ModelResults)
+		modelResultMap[key.(string)] = value.(waceapi.ModelResults)
 		modelWeightMap[key.(string)] = cs.ModelPlugins[key.(string)].Weight
 		return true
 	})
 
-	res, err := dp.checkResults(DecisionInput{TransactionId: transactionId, Results: modelResultMap, ModelWeight: modelWeightMap, WAFdata: wafParams})
+	res, err := dp.checkResults(waceapi.DecisionInput{TransactionId: transactionId, Results: modelResultMap, ModelWeight: modelWeightMap, WAFdata: wafParams})
 	logger.TPrintf(logging.INFO, transactionId, "%s | transaction checked. Block: %t ", decisionId, res)
 
 	return res, err
@@ -514,7 +478,7 @@ func (p *PluginManager) ModelResultsHandler(modelId string) error {
 									modelChannel.(chan ModelStatus) <- ModelStatus{ModelID: modelId, Err: fmt.Errorf("transaction results not found")}
 									return
 								}
-								modelResult := ModelResults{ProbAttack: data.ProbAttack, Data: data.Data}
+								modelResult := waceapi.ModelResults{ProbAttack: data.ProbAttack, Data: data.Data}
 								resultSyncMap.(*sync.Map).Store(modelId, modelResult)
 							}
 							modelChannel.(chan ModelStatus) <- ModelStatus{ModelID: modelId, ProbAttack: data.ProbAttack, Err: nil}
@@ -540,7 +504,7 @@ func (p *PluginManager) ModelResultsHandler(modelId string) error {
 }
 
 // ModelProcessHandler listens for messages on the model queue
-func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelResults, error)) error {
+func ModelProcessHandler(modelId string, modelProcess func(waceapi.ModelInput) (waceapi.ModelResults, error)) error {
 	logger := logging.Get()
 	logger.Printf(logging.INFO, "Model: %s | Starting model process handler", modelId)
 	cs, err := configstore.Get()
@@ -557,13 +521,13 @@ func ModelProcessHandler(modelId string, modelProcess func(ModelInput) (ModelRes
 
 	_, err = nc.Subscribe(modelId, func(msg *nats.Msg) {
 		go func(msg nats.Msg) {
-			data := &ModelInput{}
+			data := &waceapi.ModelInput{}
 			err := json.Unmarshal(msg.Data, data)
 			if err != nil {
 				logger.Printf(logging.ERROR, "Model: %s | Failed to parse JSON payload", modelId)
 			} else {
 				res, err := modelProcess(*data)
-				modelResult := ModelResults{ProbAttack: res.ProbAttack, Data: res.Data}
+				modelResult := waceapi.ModelResults{ProbAttack: res.ProbAttack, Data: res.Data}
 				payloadToSend := &ModelTransmitionResults{
 					TransactionId: data.TransactionId,
 					ModelResults:  modelResult,

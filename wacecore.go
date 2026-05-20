@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
+	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
 
@@ -60,7 +61,7 @@ func addTransactionAnalysis(transactionID string) {
 // callPlugins calls the model plugins in the given list, with the given input.
 // It waits for all the synchronous model plugins to finish, and sends the
 // result to the client. The asynchronous model plugins are executed in parallel
-func callPlugins(input pluginmanager.HTTPPayload, models []string, t configstore.ModelPluginType, transactionID string) error {
+func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.ModelPluginType, transactionID string) error {
 	logger := logging.Get()
 
 	// channel to receive the status of the execution of the analysis
@@ -176,7 +177,7 @@ func InitTransaction(transactionId string) {
 }
 
 // Analyze calls the model plugins with the given payload and models
-func Analyze(modelsTypeAsString, transactionId string, payload pluginmanager.HTTPPayload, models []string) error {
+func Analyze(modelsTypeAsString, transactionId string, payload waceapi.HTTPPayload, models []string) error {
 	if len(models) > 0 {
 		logger := logging.Get()
 		modelsType, err := configstore.StringToPluginType(modelsTypeAsString)
