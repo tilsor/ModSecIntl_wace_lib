@@ -512,6 +512,88 @@ func TestPluginManagerReloadChangesOutput(t *testing.T) {
 	runProcess(0.8)
 }
 
+// TestPluginManagerAddModelChannelAndClose exercises AddModelChannel (sync path)
+// and the CloseTransaction sync-cleanup branch, which only runs when
+// syncModelsChannels has an entry for the transaction.
+func TestPluginManagerAddModelChannelAndClose(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin)
+	pm := setupPluginManager(t, config)
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+
+	ch := make(chan ModelStatus)
+	pm.AddModelChannel(txID, configstore.Everything, ch, "sync")
+
+	// CloseTransaction must close the registered channel and clean up maps.
+	pm.CloseTransaction(txID)
+
+	// A closed channel returns immediately with ok=false.
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Error("expected channel to be closed by CloseTransaction")
+		}
+	default:
+		t.Error("CloseTransaction should have closed the registered channel")
+	}
+}
+
+// TestPluginManagerProcessAsyncPlugin verifies that Process sends an error when
+// the configstore marks the plugin as async, even though it is present in the
+// in-process plugin map.
+func TestPluginManagerProcessAsyncPlugin(t *testing.T) {
+	// Load trivial as sync so it ends up in pm.modelPlugins.
+	config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin)
+	pm := setupPluginManager(t, config)
+
+	// Update configstore to mark the plugin as async without reloading pm.
+	asyncConf := baseConfig + `modelplugins:
+  - id: "trivial"
+    path: "../testdata/plugins/model/trivial.so"
+    weight: 1
+    plugintype: "Everything"
+    mode: async
+`
+	cs, err := configstore.Get()
+	if err != nil {
+		t.Fatalf("configstore.Get: %v", err)
+	}
+	var aux configstore.ConfigFileData
+	if err := yaml.Unmarshal([]byte(asyncConf), &aux); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := cs.SetConfig(aux); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+
+	ch := make(chan ModelStatus, 1)
+	go pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	status := <-ch
+	if status.Err == nil {
+		t.Error("Process on async-configured plugin should return error via channel")
+	}
+}
+
+// TestPluginManagerCheckResultWithoutTransaction verifies that CheckResult
+// returns an error when InitTransaction was never called (results map absent).
+func TestPluginManagerCheckResultWithoutTransaction(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" + simplePlugin)
+	pm := setupPluginManager(t, config)
+
+	// Deliberately skip pm.InitTransaction — no results entry exists.
+	txID := generateRandomID()
+
+	_, err := pm.CheckResult(txID, "simple", make(map[string]string))
+	if err == nil {
+		t.Error("CheckResult without InitTransaction should return error")
+	}
+}
+
 // TestPluginManagerProcessWithoutTransaction verifies that Process sends an
 // error when the transaction was never initialised (results map is absent).
 func TestPluginManagerProcessWithoutTransaction(t *testing.T) {
