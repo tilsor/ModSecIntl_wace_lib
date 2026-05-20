@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
-	"github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
+	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/sdk/metric"
 
 	"gopkg.in/yaml.v3"
@@ -21,7 +21,7 @@ var requestVersion = "HTTP/1.1"
 
 // var requestLine = "POST /cgi-bin/process.cgi HTTP/1.1\n"
 
-var requestHeaders = []pluginmanager.HTTPHeader{
+var requestHeaders = []waceapi.HTTPHeader{
 	{Key: "User-Agent", Value: "Mozilla/4.0 (compatible; MSIE5.01; Windows NT)"},
 	{Key: "Host", Value: "www.tutorialspoint.com"},
 	{Key: "Content-Type", Value: "application/x-www-form-urlencoded"},
@@ -31,7 +31,7 @@ var requestHeaders = []pluginmanager.HTTPHeader{
 	{Key: "Connection", Value: "Keep-Alive"},
 }
 
-var requestHeadersPayload = pluginmanager.HTTPPayload{
+var requestHeadersPayload = waceapi.HTTPPayload{
 	URI:            requestURI,
 	Method:         requestMethod,
 	HTTPVersion:    requestVersion,
@@ -39,7 +39,7 @@ var requestHeadersPayload = pluginmanager.HTTPPayload{
 }
 
 var requestBody = "licenseID=string&content=string&/paramsXML=string\n"
-var wholeRequest = pluginmanager.HTTPPayload{
+var wholeRequest = waceapi.HTTPPayload{
 	URI:         requestURI,
 	Method:      requestMethod,
 	HTTPVersion: requestVersion,
@@ -49,7 +49,7 @@ var wholeRequest = pluginmanager.HTTPPayload{
 // var wholeRequest = requestLine + requestHeaders + "\n" + requestBody
 var responseCode = 200
 var responseProto = "HTTP/1.1"
-var responseHeaders = []pluginmanager.HTTPHeader{
+var responseHeaders = []waceapi.HTTPHeader{
 	{Key: "Date", Value: "Mon, 27 Jul 2009 12:28:53 GMT"},
 	{Key: "Server", Value: "Apache/2.2.14 (Win32)"},
 	{Key: "Last-Modified", Value: "Wed, 22 Jul 2009 19:15:56 GMT"},
@@ -58,7 +58,7 @@ var responseHeaders = []pluginmanager.HTTPHeader{
 	{Key: "Connection", Value: "Closed"},
 }
 
-var responseHeadersPayload = pluginmanager.HTTPPayload{
+var responseHeadersPayload = waceapi.HTTPPayload{
 	ResponseProtocol: responseProto,
 	ResponseCode:     responseCode,
 	ResponseHeaders:  responseHeaders,
@@ -71,7 +71,7 @@ var responseBody = `<html>
 </html>
 `
 
-var wholeResponse = pluginmanager.HTTPPayload{
+var wholeResponse = waceapi.HTTPPayload{
 	ResponseProtocol: responseProto,
 	ResponseCode:     responseCode,
 	ResponseHeaders:  responseHeaders,
@@ -259,7 +259,7 @@ func generateRandomID() string {
 func TestAnalyze(t *testing.T) {
 	type step struct {
 		payloadType string
-		payload     pluginmanager.HTTPPayload
+		payload     waceapi.HTTPPayload
 		plugins     []string
 	}
 	tests := []struct {
@@ -273,7 +273,7 @@ func TestAnalyze(t *testing.T) {
 			config: configAllModels,
 			steps: []step{
 				{"RequestHeaders", requestHeadersPayload, []string{"trivialRequestHeaders"}},
-				{"RequestBody", pluginmanager.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
+				{"RequestBody", waceapi.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
 			},
 		},
 		{
@@ -288,7 +288,7 @@ func TestAnalyze(t *testing.T) {
 			config: configAllModels,
 			steps: []step{
 				{"ResponseHeaders", responseHeadersPayload, []string{"trivialResponseHeaders"}},
-				{"ResponseBody", pluginmanager.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
+				{"ResponseBody", waceapi.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
 			},
 		},
 		{
@@ -560,13 +560,13 @@ func TestAnalyzeMultiPhase(t *testing.T) {
 
 	phases := []struct {
 		payloadType string
-		payload     pluginmanager.HTTPPayload
+		payload     waceapi.HTTPPayload
 		models      []string
 	}{
 		{"RequestHeaders", requestHeadersPayload, []string{"trivialRequestHeaders"}},
-		{"RequestBody", pluginmanager.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
+		{"RequestBody", waceapi.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
 		{"ResponseHeaders", responseHeadersPayload, []string{"trivialResponseHeaders"}},
-		{"ResponseBody", pluginmanager.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
+		{"ResponseBody", waceapi.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
 	}
 
 	for _, p := range phases {
@@ -662,7 +662,7 @@ func TestReload(t *testing.T) {
 	txID := generateRandomID()
 	InitTransaction(txID)
 	defer CloseTransaction(txID)
-	if err := Analyze("Everything", txID, pluginmanager.HTTPPayload{URI: "/test"}, []string{"param"}); err != nil {
+	if err := Analyze("Everything", txID, waceapi.HTTPPayload{URI: "/test"}, []string{"param"}); err != nil {
 		t.Fatalf("Analyze after Reload: %v", err)
 	}
 	if _, err := CheckTransaction(txID, "simple", make(map[string]string)); err != nil {
@@ -687,7 +687,7 @@ func BenchmarkTrivial(b *testing.B) {
 		transactionId := strconv.Itoa(i)
 		InitTransaction(transactionId)
 
-		Analyze("RequestHeaders", transactionId, pluginmanager.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
+		Analyze("RequestHeaders", transactionId, waceapi.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
 
 		_, err := CheckTransaction(transactionId, "simple", wafParams)
 		if err != nil {
@@ -715,7 +715,7 @@ func BenchmarkTrivialFullNATS(b *testing.B) {
 		transactionId := generateRandomID()
 		InitTransaction(transactionId)
 
-		Analyze("RequestHeaders", transactionId, pluginmanager.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
+		Analyze("RequestHeaders", transactionId, waceapi.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
 
 		_, err := CheckTransaction(transactionId, "simple", wafParams)
 		if err != nil {

@@ -8,7 +8,7 @@ import (
 	"strconv"
 
 	lg "github.com/tilsor/ModSecIntl_logging/logging"
-	pm "github.com/tilsor/ModSecIntl_wace_lib/pluginmanager"
+	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -47,7 +47,7 @@ func InitPlugin(params map[string]string, meter metric.Meter) error {
 	return nil
 }
 
-func CheckResults(decisionInput pm.DecisionInput) (bool, error) {
+func CheckResults(decisionInput waceapi.DecisionInput) (bool, error) {
 	var weightedSum float64 = 0
 	var weightsSum float64 = 0
 	for key, value := range decisionInput.Results {

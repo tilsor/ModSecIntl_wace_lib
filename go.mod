@@ -3,6 +3,7 @@ module github.com/tilsor/ModSecIntl_wace_lib
 go 1.26.2
 
 require (
+	github.com/magefile/mage v1.17.2
 	github.com/nats-io/nats.go v1.51.0
 	github.com/tilsor/ModSecIntl_logging v1.0.1
 	go.opentelemetry.io/otel v1.43.0
