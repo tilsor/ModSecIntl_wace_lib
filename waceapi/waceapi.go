@@ -1,8 +1,8 @@
 package waceapi
 
 type ModelResults struct {
-	ProbAttack float64                `json:"probattack"`
-	Data       map[string]interface{} `json:"data"`
+	ProbAttack float64 `json:"probattack"`
+	Data       any     `json:"data"`
 }
 
 type HTTPHeader struct {

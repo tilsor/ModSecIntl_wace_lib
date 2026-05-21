@@ -601,7 +601,7 @@ var trivialTrainingPlugin = `  - id: "trivial"
     training: true
     training_data:
       max_samples: 3
-      result_file_path: "/tmp/training_results.json"
+      result_file_path: "/dev/null"
 `
 
 // TestPluginManagerTrainingPluginLoaded verifies that a training plugin is
@@ -749,7 +749,7 @@ func TestPluginManagerTrainingResultNotUsedInDecision(t *testing.T) {
     training: true
     training_data:
       max_samples: 5
-      result_file_path: "/tmp/training_results.json"
+      result_file_path: "/dev/null"
 decisionplugins:
 ` + simplePlugin
 	pm := setupPluginManager(t, []byte(conf))
