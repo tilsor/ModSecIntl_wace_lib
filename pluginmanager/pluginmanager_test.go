@@ -553,7 +553,7 @@ func TestPluginManagerProcessAsyncPlugin(t *testing.T) {
     path: "../testdata/plugins/model/trivial.so"
     weight: 1
     plugintype: "Everything"
-    mode: async
+    async: true
 `
 	cs, err := configstore.Get()
 	if err != nil {
@@ -591,6 +591,190 @@ func TestPluginManagerCheckResultWithoutTransaction(t *testing.T) {
 	_, err := pm.CheckResult(txID, "simple", make(map[string]string))
 	if err == nil {
 		t.Error("CheckResult without InitTransaction should return error")
+	}
+}
+
+var trivialTrainingPlugin = `  - id: "trivial"
+    path: "../testdata/plugins/model/trivial.so"
+    weight: 1
+    plugintype: "Everything"
+    training: true
+    training_data:
+      max_samples: 3
+      result_file_path: "/tmp/training_results.json"
+`
+
+// TestPluginManagerTrainingPluginLoaded verifies that a training plugin is
+// loaded with its channel, context, and cancel function all initialised and
+// that the context is live immediately after load.
+func TestPluginManagerTrainingPluginLoaded(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialTrainingPlugin)
+	pm := setupPluginManager(t, config)
+
+	mp, ok := pm.modelPlugins["trivial"]
+	if !ok {
+		t.Fatal("training plugin was not loaded into modelPlugins")
+	}
+	if mp.trainingChannel == nil {
+		t.Error("trainingChannel should not be nil for a training plugin")
+	}
+	if mp.trainingCtx == nil {
+		t.Error("trainingCtx should not be nil for a training plugin")
+	}
+	if mp.trainingCancel == nil {
+		t.Error("trainingCancel should not be nil for a training plugin")
+	}
+	select {
+	case <-mp.trainingCtx.Done():
+		t.Error("trainingCtx should not be done immediately after load")
+	default:
+	}
+}
+
+// TestPluginManagerProcessTrainingExhaustsMaxSamples sends maxSamples results
+// through ProcessTraining and verifies that the goroutine exits (calling
+// defer cancel()) once it has consumed all of them.
+func TestPluginManagerProcessTrainingExhaustsMaxSamples(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialTrainingPlugin)
+	pm := setupPluginManager(t, config)
+	mp := pm.modelPlugins["trivial"]
+
+	txID := generateRandomID()
+
+	for i := 0; i < 3; i++ {
+		go pm.ProcessTraining("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything)
+	}
+
+	select {
+	case <-mp.trainingCtx.Done():
+		// goroutine exited after maxSamples and called defer cancel()
+	case <-time.After(2 * time.Second):
+		t.Error("training goroutine did not exit after exhausting maxSamples")
+	}
+}
+
+// TestPluginManagerProcessTrainingNonexistent verifies that ProcessTraining
+// returns immediately when the model ID does not exist, without blocking.
+func TestPluginManagerProcessTrainingNonexistent(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialTrainingPlugin)
+	pm := setupPluginManager(t, config)
+
+	done := make(chan struct{})
+	go func() {
+		pm.ProcessTraining("nonexistent", generateRandomID(), waceapi.HTTPPayload{URI: "/test"}, configstore.Everything)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("ProcessTraining with nonexistent plugin should return immediately")
+	}
+}
+
+// TestPluginManagerProcessTrainingAfterCancel verifies that ProcessTraining
+// does not block when the training context has already been cancelled.
+func TestPluginManagerProcessTrainingAfterCancel(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialTrainingPlugin)
+	pm := setupPluginManager(t, config)
+	mp := pm.modelPlugins["trivial"]
+
+	mp.trainingCancel()
+
+	done := make(chan struct{})
+	go func() {
+		pm.ProcessTraining("trivial", generateRandomID(), waceapi.HTTPPayload{URI: "/test"}, configstore.Everything)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("ProcessTraining should not block after context cancellation")
+	}
+}
+
+// TestPluginManagerTrainingReloadDisablesTraining verifies that Reload cancels
+// the training goroutine when the new config has training disabled for the plugin.
+func TestPluginManagerTrainingReloadDisablesTraining(t *testing.T) {
+	config := []byte(baseConfig + "modelplugins:\n" + trivialTrainingPlugin)
+	pm := setupPluginManager(t, config)
+	mp := pm.modelPlugins["trivial"]
+
+	select {
+	case <-mp.trainingCtx.Done():
+		t.Fatal("trainingCtx should be alive before Reload")
+	default:
+	}
+
+	disabledConfig := baseConfig + `modelplugins:
+  - id: "trivial"
+    path: "../testdata/plugins/model/trivial.so"
+    weight: 1
+    plugintype: "Everything"
+`
+	cs, err := configstore.Get()
+	if err != nil {
+		t.Fatalf("configstore.Get: %v", err)
+	}
+	var aux configstore.ConfigFileData
+	if err := yaml.Unmarshal([]byte(disabledConfig), &aux); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := cs.SetConfig(aux); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	select {
+	case <-mp.trainingCtx.Done():
+		// goroutine was cancelled by Reload
+	case <-time.After(time.Second):
+		t.Error("trainingCtx should be cancelled after Reload with training disabled")
+	}
+}
+
+// TestPluginManagerTrainingResultNotUsedInDecision verifies that a result
+// produced by ProcessTraining is stored in the training channel only and never
+// reaches p.results, so CheckResult cannot use it to influence a decision.
+//
+// trivial2 always returns ProbAttack=1.0. If its training result leaked into
+// p.results, CheckResult would block the transaction; it must not.
+func TestPluginManagerTrainingResultNotUsedInDecision(t *testing.T) {
+	conf := baseConfig + `modelplugins:
+  - id: "trivial2"
+    path: "../testdata/plugins/model/trivial2.so"
+    weight: 1
+    plugintype: "Everything"
+    training: true
+    training_data:
+      max_samples: 5
+      result_file_path: "/tmp/training_results.json"
+decisionplugins:
+` + simplePlugin
+	pm := setupPluginManager(t, []byte(conf))
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+
+	done := make(chan struct{})
+	go func() {
+		pm.ProcessTraining("trivial2", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything)
+		close(done)
+	}()
+	<-done // wait until the result has been handed off to the training goroutine
+
+	// WAF params that would cause a block if trivial2's prob=1.0 reached the decision.
+	result, err := pm.CheckResult(txID, "simple", map[string]string{
+		"inbound_blocking":  "20",
+		"inbound_threshold": "5",
+	})
+	if err != nil {
+		t.Fatalf("CheckResult error: %v", err)
+	}
+	if result {
+		t.Error("CheckResult blocked — training model result must not feed into the decision plugin")
 	}
 }
 

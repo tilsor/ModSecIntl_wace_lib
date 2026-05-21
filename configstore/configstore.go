@@ -67,16 +67,23 @@ func StringToPluginType(textType string) (ModelPluginType, error) {
 	return -1, fmt.Errorf("invalid plugin type %s", textType)
 }
 
+type TrainingData struct {
+	MaxSamples     int    `yaml:"max_samples"`
+	ResultFilePath string `yaml:"result_file_path"`
+}
+
 // ModelPluginConfig stores the configuration of a model plugin
 type modelPluginConfig struct {
-	ID         string
-	Path       string
-	Weight     float64
-	Threshold  float64
-	Params     map[string]string
-	PluginType ModelPluginType
-	Mode       string
-	Remote     bool
+	ID           string
+	Path         string
+	Weight       float64
+	Threshold    float64
+	Params       map[string]string
+	PluginType   ModelPluginType
+	async        bool
+	remote       bool
+	training     bool
+	TrainingData TrainingData
 }
 
 // DecisionPluginConfig stores the configuration of a decision plugin
@@ -121,14 +128,16 @@ func Clean() {
 }
 
 type configFileModelPlugin struct {
-	ID         string
-	Path       string
-	Weight     float64
-	Threshold  float64
-	Params     map[string]string
-	PluginType string `yaml:"plugintype"`
-	Mode       string
-	Remote     bool
+	ID           string
+	Path         string
+	Weight       float64
+	Threshold    float64
+	Params       map[string]string
+	PluginType   string `yaml:"plugintype"`
+	Async        bool
+	Remote       bool
+	Training     bool
+	TrainingData TrainingData `yaml:"training_data"`
 }
 
 type configFileDecisionPlugin struct {
@@ -147,7 +156,17 @@ type ConfigFileData struct {
 
 // IsAsync returns true if the model plugin is async
 func (c *ConfigStore) IsAsync(modelID string) bool {
-	return c.ModelPlugins[modelID].Mode == "async"
+	return c.ModelPlugins[modelID].async
+}
+
+// IsRemote returns true if the model plugin is remote
+func (c *ConfigStore) IsRemote(modelID string) bool {
+	return c.ModelPlugins[modelID].remote
+}
+
+// IsInTraining returns true if the model plugin is in training mode (collecting data)
+func (c *ConfigStore) IsInTraining(modelID string) bool {
+	return c.ModelPlugins[modelID].training
 }
 
 // CheckLogging verifies if the log path is valid
@@ -178,7 +197,6 @@ func checkConfig(inConf ConfigFileData) error {
 
 	// check modelplugins
 	for _, modelP := range inConf.Modelplugins {
-
 		if modelP.Path != "" {
 			if _, err := os.Stat(modelP.Path); err != nil {
 				return fmt.Errorf("%s plugin path %s: %v", modelP.ID, modelP.Path, err)
@@ -189,7 +207,15 @@ func checkConfig(inConf ConfigFileData) error {
 		if modelP.PluginType == "" {
 			return fmt.Errorf("%s plugin type cannot be empty, please provide a valid type", modelP.ID)
 		}
-		// fmt.Printf("modelP.Type: %s\n", modelP.Type)
+		if modelP.Training && modelP.Async {
+			return fmt.Errorf("model %s plugin cannot be in training mode and async mode at the same time", modelP.ID)
+		}
+		if modelP.Training && modelP.Remote {
+			return fmt.Errorf("model %s: remote training mode is not supported", modelP.ID)
+		}
+		if modelP.Training && modelP.TrainingData.MaxSamples == 0 {
+			return fmt.Errorf("model %s: max sample count should be greater than 0", modelP.ID)
+		}
 	}
 	// check decisionplugins
 	for _, decisionP := range inConf.Decisionplugins {
@@ -228,8 +254,10 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		modelConfig.Threshold = modelP.Threshold
 		modelConfig.Params = modelP.Params
 		modelConfig.PluginType, err = StringToPluginType(modelP.PluginType)
-		modelConfig.Mode = modelP.Mode
-		modelConfig.Remote = modelP.Remote
+		modelConfig.async = modelP.Async
+		modelConfig.remote = modelP.Remote
+		modelConfig.training = modelP.Training
+		modelConfig.TrainingData = modelP.TrainingData
 		if err != nil {
 			return err
 		}
@@ -245,11 +273,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		cs.DecisionPlugins[decisionConfig.ID] = decisionConfig
 	}
 
-	if inConf.NatsURL != "" {
-		cs.NatsURL = inConf.NatsURL
-	} else {
-		cs.NatsURL = "localhost:4222"
-	}
+	cs.NatsURL = inConf.NatsURL
 
 	return nil
 }

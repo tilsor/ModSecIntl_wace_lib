@@ -216,12 +216,12 @@ modelplugins:
     plugintype: RequestHeaders
     path: "testdata/plugins/model/trivial.so"
     weight: 1
-    mode: async
+    async: true
   - id: "trivial2"
     plugintype: RequestHeaders
     path: "testdata/plugins/model/trivial2.so"
     weight: 2
-    mode: async
+    async: true
 #The decision plugin configuration
 decisionplugins:
   - id: "simple"

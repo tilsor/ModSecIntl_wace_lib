@@ -485,12 +485,11 @@ func TestModelPluginTypeString(t *testing.T) {
 func TestIsAsync(t *testing.T) {
 	tests := []struct {
 		name      string
-		mode      string
+		async     bool
 		wantAsync bool
 	}{
-		{"sync mode", "sync", false},
-		{"async mode", "async", true},
-		{"empty mode defaults to sync", "", false},
+		{"no async field defaults to sync", false, false},
+		{"async: true is async", true, true},
 	}
 
 	for _, tt := range tests {
@@ -508,14 +507,14 @@ modelplugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
     plugintype: "RequestHeaders"
-    mode: "%s"
-`, tt.mode)
+    async: %v
+`, tt.async)
 			if err := initialize([]byte(config)); err != nil {
 				t.Fatalf("initialize failed: %v", err)
 			}
 
 			if got := cs.IsAsync("testplugin"); got != tt.wantAsync {
-				t.Errorf("IsAsync with mode %q = %v, want %v", tt.mode, got, tt.wantAsync)
+				t.Errorf("IsAsync with async=%v = %v, want %v", tt.async, got, tt.wantAsync)
 			}
 		})
 	}
@@ -531,6 +530,150 @@ func TestGetBeforeNew(t *testing.T) {
 	}
 }
 
+func TestIsInTraining(t *testing.T) {
+	tests := []struct {
+		name         string
+		training     bool
+		wantTraining bool
+	}{
+		{"no training field defaults to false", false, false},
+		{"training: true enables training mode", true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
+
+			trainingSection := ""
+			if tt.training {
+				trainingSection = "\n    training_data:\n      max_samples: 10"
+			}
+			config := fmt.Sprintf(`---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "RequestHeaders"
+    training: %v%s
+`, tt.training, trainingSection)
+			if err := initialize([]byte(config)); err != nil {
+				t.Fatalf("initialize failed: %v", err)
+			}
+
+			if got := cs.IsInTraining("testplugin"); got != tt.wantTraining {
+				t.Errorf("IsInTraining with training=%v = %v, want %v", tt.training, got, tt.wantTraining)
+			}
+		})
+	}
+}
+
+func TestTrainingDataConfig(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         string
+		wantErr        bool
+		wantMaxSamples int
+		wantPath       string
+	}{
+		{
+			name: "training with zero max_samples returns error",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "RequestHeaders"
+    training: true
+`,
+			wantErr: true,
+		},
+		{
+			name: "training and async are mutually exclusive",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "RequestHeaders"
+    training: true
+    async: true
+    training_data:
+      max_samples: 10
+`,
+			wantErr: true,
+		},
+		{
+			name: "training and remote are mutually exclusive",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "RequestHeaders"
+    training: true
+    remote: true
+    training_data:
+      max_samples: 10
+`,
+			wantErr: true,
+		},
+		{
+			name: "valid training config stores TrainingData correctly",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "RequestHeaders"
+    training: true
+    training_data:
+      max_samples: 42
+      result_file_path: "/dev/null"
+`,
+			wantErr:        false,
+			wantMaxSamples: 42,
+			wantPath:       "/dev/null",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
+
+			err = initialize([]byte(tt.config))
+			if (err != nil) != tt.wantErr {
+				if tt.wantErr {
+					t.Errorf("expected error but got none")
+				} else {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if !tt.wantErr {
+				got := cs.ModelPlugins["testplugin"].TrainingData
+				if got.MaxSamples != tt.wantMaxSamples {
+					t.Errorf("MaxSamples = %d, want %d", got.MaxSamples, tt.wantMaxSamples)
+				}
+				if got.ResultFilePath != tt.wantPath {
+					t.Errorf("ResultsFilePath = %q, want %q", got.ResultFilePath, tt.wantPath)
+				}
+			}
+		})
+	}
+}
 
 func TestNatsURL(t *testing.T) {
 	tests := []struct {
@@ -539,12 +682,12 @@ func TestNatsURL(t *testing.T) {
 		wantURL string
 	}{
 		{
-			name: "defaults to localhost:4222",
+			name: "empty string when natsurl not set",
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
 `,
-			wantURL: "localhost:4222",
+			wantURL: "",
 		},
 		{
 			name: "stores custom URL",
