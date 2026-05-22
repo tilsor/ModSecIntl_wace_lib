@@ -26,6 +26,7 @@ type HTTPPayload struct {
 type ModelInput struct {
 	TransactionId string      `json:"transactionId"`
 	Payload       HTTPPayload `json:"payload"`
+	TrainingMode  bool        `json:"trainingMode"`
 }
 
 // DecisionInput is the struct that contains the input data for the decision plugin

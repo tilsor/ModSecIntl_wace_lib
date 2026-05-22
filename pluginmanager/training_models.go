@@ -69,7 +69,7 @@ func (p *PluginManager) ProcessTraining(modelID, transactionID string, payload w
 		return
 	}
 
-	res, err := p.modelProcess(modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload}, t)
+	res, err := p.modelProcess(modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload, TrainingMode: true}, t)
 	if err != nil {
 		logger.TPrintf(logging.ERROR, transactionID, "Error processing model %s: %s", modelID, err.Error())
 		return
