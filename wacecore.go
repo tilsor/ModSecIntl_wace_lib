@@ -86,23 +86,22 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 		logger.TPrintf(logging.DEBUG, transactionID, "%s | calling from core", id)
 		if _, ok := conf.ModelPlugins[id]; !ok {
 			logger.TPrintf(logging.ERROR, transactionID, "core | model plugin %s not found", id)
+		} else if conf.ModelPlugins[id].PluginType != t {
+			logger.TPrintf(logging.ERROR, transactionID, "core | model plugin %s is not of type %s", id, t)
+		} else if conf.IsAsync(id) {
+			asyncCounter++
+			go plugins.AddToQueue(id, transactionID, input)
+		} else if conf.IsInTraining(id) {
+			go plugins.ProcessTraining(id, transactionID, input, t)
 		} else {
-			if conf.ModelPlugins[id].PluginType != t {
-				logger.TPrintf(logging.ERROR, transactionID, "core | model plugin %s is not of type %s", id, t)
+			if conf.IsRemote(id) {
+				go plugins.AddToQueue(id, transactionID, input)
 			} else {
-				if conf.IsAsync(id) {
-					asyncCounter++
-					go plugins.AddToQueue(id, transactionID, input)
-				} else {
-					if conf.ModelPlugins[id].Remote {
-						go plugins.AddToQueue(id, transactionID, input)
-					} else {
-						go plugins.Process(id, transactionID, input, t, modelPluginStatus)
-					}
-					syncCounter++
-				}
+				go plugins.Process(id, transactionID, input, t, modelPluginStatus)
 			}
+			syncCounter++
 		}
+
 	}
 
 	go func() {

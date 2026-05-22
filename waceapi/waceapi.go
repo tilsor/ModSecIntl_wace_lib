@@ -1,8 +1,8 @@
 package waceapi
 
 type ModelResults struct {
-	ProbAttack float64                `json:"probattack"`
-	Data       map[string]interface{} `json:"data"`
+	ProbAttack float64 `json:"probattack"`
+	Data       any     `json:"data"`
 }
 
 type HTTPHeader struct {
@@ -26,6 +26,7 @@ type HTTPPayload struct {
 type ModelInput struct {
 	TransactionId string      `json:"transactionId"`
 	Payload       HTTPPayload `json:"payload"`
+	TrainingMode  bool        `json:"trainingMode"`
 }
 
 // DecisionInput is the struct that contains the input data for the decision plugin
