@@ -276,7 +276,7 @@ func TestSetCredentialHeaders(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			SetCredentialHeaders(tt.headers)
+			setCredentialHeaders(tt.headers)
 			got := sanitizeCredentials(tt.input)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("after SetCredentialHeaders(%v): sanitizeCredentials() = %+v, want %+v",

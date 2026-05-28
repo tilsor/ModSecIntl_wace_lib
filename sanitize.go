@@ -37,8 +37,8 @@ func sanitizeCredentials(p waceapi.HTTPPayload) waceapi.HTTPPayload {
 	return p
 }
 
-// SetCredentialHeaders allows the user to change the list of headers to be sanitized.
-func SetCredentialHeaders(headers []string) {
+// setCredentialHeaders allows the user to change the list of headers to be sanitized.
+func setCredentialHeaders(headers []string) {
 	for i := range headers {
 		headers[i] = strings.ToLower(headers[i])
 	}

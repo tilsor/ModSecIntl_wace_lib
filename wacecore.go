@@ -269,7 +269,7 @@ func Reload(met metric.Meter, conf configstore.ConfigFileData) error {
 		return err
 	}
 	if len(cs.CredentialHeaders) != 0 {
-		SetCredentialHeaders(cs.CredentialHeaders)
+		setCredentialHeaders(cs.CredentialHeaders)
 	}
 	if err = logger.LoadLogger(cs.LogPath, cs.LogLevel); err != nil {
 		return err
@@ -293,7 +293,7 @@ func Init(met metric.Meter, conf configstore.ConfigFileData) error {
 	}
 
 	if len(cs.CredentialHeaders) != 0 {
-		SetCredentialHeaders(cs.CredentialHeaders)
+		setCredentialHeaders(cs.CredentialHeaders)
 	}
 
 	meter = met
