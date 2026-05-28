@@ -3,6 +3,7 @@ package configstore
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -670,6 +671,106 @@ modelplugins:
 				if got.ResultFilePath != tt.wantPath {
 					t.Errorf("ResultsFilePath = %q, want %q", got.ResultFilePath, tt.wantPath)
 				}
+			}
+		})
+	}
+}
+
+func TestShouldSanitize(t *testing.T) {
+	tests := []struct {
+		name         string
+		sanitize     bool
+		wantSanitize bool
+	}{
+		{"sanitize omitted defaults to false", false, false},
+		{"sanitize: true propagates correctly", true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
+
+			config := fmt.Sprintf(`---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "RequestHeaders"
+    sanitize: %v
+`, tt.sanitize)
+			if err := initialize([]byte(config)); err != nil {
+				t.Fatalf("initialize: %v", err)
+			}
+
+			if got := cs.ShouldSanitize("testplugin"); got != tt.wantSanitize {
+				t.Errorf("ShouldSanitize = %v, want %v", got, tt.wantSanitize)
+			}
+		})
+	}
+}
+
+func TestShouldSanitizeUnknownModel(t *testing.T) {
+	cs, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer Clean()
+
+	if err := initialize(validConfig); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	if cs.ShouldSanitize("nonexistent") {
+		t.Error("ShouldSanitize for unknown model ID should return false")
+	}
+}
+
+func TestCredentialHeaders(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      string
+		wantHeaders []string
+	}{
+		{
+			name: "no credential_headers field defaults to nil",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+`,
+			wantHeaders: nil,
+		},
+		{
+			name: "credential_headers values are stored",
+			config: `---
+loglevel: ERROR
+logpath: /dev/null
+credential_headers:
+  - x-api-key
+  - x-secret-token
+`,
+			wantHeaders: []string{"x-api-key", "x-secret-token"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
+
+			if err := initialize([]byte(tt.config)); err != nil {
+				t.Fatalf("initialize: %v", err)
+			}
+
+			if !reflect.DeepEqual(cs.CredentialHeaders, tt.wantHeaders) {
+				t.Errorf("CredentialHeaders = %v, want %v", cs.CredentialHeaders, tt.wantHeaders)
 			}
 		})
 	}
