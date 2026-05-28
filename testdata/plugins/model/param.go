@@ -46,7 +46,7 @@ func Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
 	logger.TPrintf(lg.WARN, input.TransactionId, "[param:Process] \"%v\"\n", input.Payload)
 	return waceapi.ModelResults{
 		ProbAttack: result,
-		Data:       make(map[string]interface{}),
+		Data:       input,
 	}, nil
 }
 

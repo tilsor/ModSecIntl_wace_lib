@@ -84,6 +84,7 @@ type modelPluginConfig struct {
 	remote       bool
 	training     bool
 	TrainingData TrainingData
+	sanitize     bool
 }
 
 // DecisionPluginConfig stores the configuration of a decision plugin
@@ -95,12 +96,13 @@ type decisionPluginConfig struct {
 
 // ConfigStore stores all wacecore configuration from the config file.
 type ConfigStore struct {
-	ModelPlugins    map[string]modelPluginConfig
-	DecisionPlugins map[string]decisionPluginConfig
-	LogPath         string
-	LogLevel        logging.LogLevel
-	NatsURL         string
-	ApplicationId   string
+	ModelPlugins      map[string]modelPluginConfig
+	DecisionPlugins   map[string]decisionPluginConfig
+	LogPath           string
+	LogLevel          logging.LogLevel
+	NatsURL           string
+	ApplicationId     string
+	CredentialHeaders []string
 }
 
 var config *ConfigStore
@@ -138,6 +140,7 @@ type configFileModelPlugin struct {
 	Remote       bool
 	Training     bool
 	TrainingData TrainingData `yaml:"training_data"`
+	Sanitize     bool
 }
 
 type configFileDecisionPlugin struct {
@@ -147,11 +150,12 @@ type configFileDecisionPlugin struct {
 }
 
 type ConfigFileData struct {
-	Logpath         string
-	Loglevel        string
-	Modelplugins    []configFileModelPlugin
-	Decisionplugins []configFileDecisionPlugin
-	NatsURL         string
+	Logpath           string
+	Loglevel          string
+	Modelplugins      []configFileModelPlugin
+	Decisionplugins   []configFileDecisionPlugin
+	NatsURL           string
+	CredentialHeaders []string `yaml:"credential_headers"`
 }
 
 // IsAsync returns true if the model plugin is async
@@ -167,6 +171,10 @@ func (c *ConfigStore) IsRemote(modelID string) bool {
 // IsInTraining returns true if the model plugin is in training mode (collecting data)
 func (c *ConfigStore) IsInTraining(modelID string) bool {
 	return c.ModelPlugins[modelID].training
+}
+
+func (c *ConfigStore) ShouldSanitize(modelID string) bool {
+	return c.ModelPlugins[modelID].sanitize
 }
 
 // CheckLogging verifies if the log path is valid
@@ -258,6 +266,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		modelConfig.remote = modelP.Remote
 		modelConfig.training = modelP.Training
 		modelConfig.TrainingData = modelP.TrainingData
+		modelConfig.sanitize = modelP.Sanitize
 		if err != nil {
 			return err
 		}
@@ -274,6 +283,8 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 	}
 
 	cs.NatsURL = inConf.NatsURL
+
+	cs.CredentialHeaders = inConf.CredentialHeaders
 
 	return nil
 }
