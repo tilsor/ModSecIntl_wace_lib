@@ -68,8 +68,11 @@ func StringToPluginType(textType string) (ModelPluginType, error) {
 }
 
 type TrainingData struct {
-	MaxSamples     int    `yaml:"max_samples"`
-	ResultFilePath string `yaml:"result_file_path"`
+	MinSamples           int    `yaml:"min_samples"`
+	MaxSamples           int    `yaml:"max_samples"`
+	ResultFilePath       string `yaml:"result_file_path"`
+	StatusFilePath       string `yaml:"status_file_path"`
+	StatusUpdateInterval int    `yaml:"status_update_interval"`
 }
 
 // ModelPluginConfig stores the configuration of a model plugin
@@ -221,8 +224,9 @@ func checkConfig(inConf ConfigFileData) error {
 		if modelP.Training && modelP.Remote {
 			return fmt.Errorf("model %s: remote training mode is not supported", modelP.ID)
 		}
-		if modelP.Training && modelP.TrainingData.MaxSamples == 0 {
-			return fmt.Errorf("model %s: max sample count should be greater than 0", modelP.ID)
+		if modelP.Training && (modelP.TrainingData.MaxSamples <= 0 || modelP.TrainingData.MinSamples < 0 ||
+			modelP.TrainingData.MaxSamples < modelP.TrainingData.MinSamples || modelP.TrainingData.MaxSamples < modelP.TrainingData.StatusUpdateInterval) {
+			return fmt.Errorf("model %s: Max sample count should be greater than 0. Min sample count should be greater than or equal 0. Max sample count should be greater than or equal min sample count. Max sample count should be greater than or equal status update interval", modelP.ID)
 		}
 	}
 	// check decisionplugins
@@ -266,6 +270,9 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		modelConfig.remote = modelP.Remote
 		modelConfig.training = modelP.Training
 		modelConfig.TrainingData = modelP.TrainingData
+		if modelConfig.TrainingData.StatusUpdateInterval == 0 {
+			modelConfig.TrainingData.StatusUpdateInterval = max(1, modelConfig.TrainingData.MaxSamples/10)
+		}
 		modelConfig.sanitize = modelP.Sanitize
 		if err != nil {
 			return err

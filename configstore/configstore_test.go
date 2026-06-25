@@ -676,6 +676,55 @@ modelplugins:
 	}
 }
 
+func TestTrainingDataStatusUpdateInterval(t *testing.T) {
+	cases := []struct {
+		name             string
+		maxSamples       int
+		explicitInterval int // 0 means omitted from YAML
+		wantInterval     int
+	}{
+		{"omitted with MaxSamples=100 defaults to 10", 100, 0, 10},
+		{"omitted with MaxSamples=5 defaults to 1 (floor protection)", 5, 0, 1},
+		{"omitted with MaxSamples=10 defaults to 1", 10, 0, 1},
+		{"explicit value is preserved", 100, 7, 7},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cs, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer Clean()
+
+			intervalLine := ""
+			if tc.explicitInterval != 0 {
+				intervalLine = fmt.Sprintf("\n      status_update_interval: %d", tc.explicitInterval)
+			}
+			config := fmt.Sprintf(`---
+loglevel: ERROR
+logpath: /dev/null
+modelplugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugintype: "RequestHeaders"
+    training: true
+    training_data:
+      max_samples: %d%s
+`, tc.maxSamples, intervalLine)
+
+			if err := initialize([]byte(config)); err != nil {
+				t.Fatalf("initialize: %v", err)
+			}
+
+			got := cs.ModelPlugins["testplugin"].TrainingData.StatusUpdateInterval
+			if got != tc.wantInterval {
+				t.Errorf("StatusUpdateInterval = %d, want %d", got, tc.wantInterval)
+			}
+		})
+	}
+}
+
 func TestShouldSanitize(t *testing.T) {
 	tests := []struct {
 		name         string
