@@ -147,6 +147,7 @@ func (p *PluginManager) handleTrainingModel(modelID string, td configstore.Train
 	defer f.Close()
 
 	collectedSamples := 0
+	// This has a 64KB line limit
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		collectedSamples++
