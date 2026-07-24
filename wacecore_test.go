@@ -725,14 +725,7 @@ func BenchmarkTrivialFullNATS(b *testing.B) {
 	}
 }
 
-// TestCloseTransactionWaitsForPendingAnalysis reproduces the "close channel
-// before response" bug: previously, CloseTransaction closed a transaction's
-// channels immediately, regardless of whether a callPlugins invocation
-// launched by Analyze was still in flight. If that invocation later tried to
-// signal completion, it sent on an already-closed channel and panicked the
-// whole process ("send on closed channel").
-//
-// This test drives the same internal sequence callPlugins follows: load the
+// TestCloseTransactionWaitsForPendingAnalysis drives the same internal sequence callPlugins follows: load the
 // transactionSync from analysisMap, then (after doing its work) signal
 // completion on it. The load happens up front and completion is signalled
 // from a delayed goroutine, reproducing the race window between those two
