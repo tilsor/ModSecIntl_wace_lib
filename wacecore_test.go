@@ -724,3 +724,52 @@ func BenchmarkTrivialFullNATS(b *testing.B) {
 		CloseTransaction(transactionId)
 	}
 }
+
+// TestCloseTransactionWaitsForPendingAnalysis reproduces the "close channel
+// before response" bug: previously, CloseTransaction closed a transaction's
+// channels immediately, regardless of whether a callPlugins invocation
+// launched by Analyze was still in flight. If that invocation later tried to
+// signal completion, it sent on an already-closed channel and panicked the
+// whole process ("send on closed channel").
+//
+// This test drives the same internal sequence callPlugins follows: load the
+// transactionSync from analysisMap, then (after doing its work) signal
+// completion on it. The load happens up front and completion is signalled
+// from a delayed goroutine, reproducing the race window between those two
+// steps where a concurrent CloseTransaction used to tear things down early.
+// With the fix, CloseTransaction must block until that signal arrives
+// instead of racing ahead.
+func TestCloseTransactionWaitsForPendingAnalysis(t *testing.T) {
+	err := initialize(configAllModels)
+	defer configstore.Clean()
+	if err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	txID := generateRandomID()
+	InitTransaction(txID)
+	addTransactionAnalysis(txID)
+
+	value, ok := analysisMap.Load(txID)
+	if !ok {
+		t.Fatal("transaction missing right after InitTransaction/addTransactionAnalysis")
+	}
+	tSync := value.(*transactionSync)
+
+	finished := make(chan struct{})
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		tSync.wg.Done()
+		close(finished)
+	}()
+
+	// Must block until the goroutine above calls wg.Done(), not race ahead
+	// and tear down pluginmanager's channels while it could still be sending.
+	CloseTransaction(txID)
+
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("pending analysis goroutine never completed")
+	}
+}
