@@ -92,9 +92,13 @@ type modelPluginConfig struct {
 
 // DecisionPluginConfig stores the configuration of a decision plugin
 type decisionPluginConfig struct {
-	ID     string
-	Path   string
-	Params map[string]string
+	ID           string
+	Path         string
+	Params       map[string]string
+	Training     bool
+	TrainingData TrainingData
+	ModelWeight  map[string]float64
+	WAFWeight    float64
 }
 
 // ConfigStore stores all wacecore configuration from the config file.
@@ -147,9 +151,13 @@ type configFileModelPlugin struct {
 }
 
 type configFileDecisionPlugin struct {
-	ID     string
-	Path   string
-	Params map[string]string
+	ID           string
+	Path         string
+	Params       map[string]string
+	ModelWeight  map[string]float64
+	WAFWeight    float64
+	Training     bool
+	TrainingData TrainingData `yaml:"training_data"`
 }
 
 type ConfigFileData struct {
@@ -174,6 +182,11 @@ func (c *ConfigStore) IsRemote(modelID string) bool {
 // IsInTraining returns true if the model plugin is in training mode (collecting data)
 func (c *ConfigStore) IsInTraining(modelID string) bool {
 	return c.ModelPlugins[modelID].training
+}
+
+// IsDecisionInTraining returns true if the decision plugin is in training mode (collecting data)
+func (c *ConfigStore) IsDecisionInTraining(decisionID string) bool {
+	return c.DecisionPlugins[decisionID].Training
 }
 
 func (c *ConfigStore) ShouldSanitize(modelID string) bool {
@@ -239,6 +252,10 @@ func checkConfig(inConf ConfigFileData) error {
 		} else {
 			return fmt.Errorf("%s plugin path is empty, please provide a valid path", decisionP.ID)
 		}
+		if decisionP.Training && (decisionP.TrainingData.MaxSamples <= 0 || decisionP.TrainingData.MinSamples < 0 ||
+			decisionP.TrainingData.MaxSamples < decisionP.TrainingData.MinSamples || decisionP.TrainingData.MaxSamples < decisionP.TrainingData.StatusUpdateInterval) {
+			return fmt.Errorf("decision %s: Max sample count should be greater than 0. Min sample count should be greater than or equal 0. Max sample count should be greater than or equal min sample count. Max sample count should be greater than or equal status update interval", decisionP.ID)
+		}
 	}
 
 	return nil
@@ -286,6 +303,13 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		decisionConfig.ID = decisionP.ID
 		decisionConfig.Path = decisionP.Path
 		decisionConfig.Params = decisionP.Params
+		decisionConfig.Training = decisionP.Training
+		decisionConfig.TrainingData = decisionP.TrainingData
+		if decisionConfig.TrainingData.StatusUpdateInterval == 0 {
+			decisionConfig.TrainingData.StatusUpdateInterval = max(1, decisionConfig.TrainingData.MaxSamples/10)
+		}
+		decisionConfig.ModelWeight = decisionP.ModelWeight
+		decisionConfig.WAFWeight = decisionP.WAFWeight
 		cs.DecisionPlugins[decisionConfig.ID] = decisionConfig
 	}
 

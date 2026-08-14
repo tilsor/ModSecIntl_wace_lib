@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"strconv"
 
 	lg "github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
@@ -24,7 +23,7 @@ func InitPlugin(params map[string]string, meter metric.Meter) error {
 	return nil
 }
 
-func CheckResults(decisionInput waceapi.DecisionInput) (bool, error) {
+func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	logger := lg.Get()
 	var totalModelW float64 = 0
 	var modelDetectionCount int = 0
@@ -37,24 +36,24 @@ func CheckResults(decisionInput waceapi.DecisionInput) (bool, error) {
 		}
 	}
 
-	for key, value := range decisionInput.WAFdata {
-		logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "simple | WAF data: %v: %v", key, value)
+	for key, value := range decisionInput.WAFdata.Scores {
+		logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "simple | WAF score: %v: %v", key, value)
 	}
 
 	// if we have some model results
 	if modelDetectionCount > 0 {
 		totalModelProb = totalModelW / float64(modelDetectionCount)
 	}
-	if len(decisionInput.WAFdata) != 0 {
-		as, _ := strconv.Atoi(decisionInput.WAFdata["inbound_blocking"])
-		it, _ := strconv.Atoi(decisionInput.WAFdata["inbound_threshold"])
+	if len(decisionInput.WAFdata.Scores) != 0 {
+		as := decisionInput.WAFdata.Scores["inbound_blocking"]
+		it := decisionInput.WAFdata.Scores["inbound_threshold"]
 		logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "Coraza | Anomaly score: %v Anomaly score threshold: %v ", as, it)
 
 		if as >= it && totalModelProb > 0.5 { // coraza wants to block and models agree
-			return true, nil
+			return waceapi.DecisionResult{Block: true}, nil
 		}
 	}
-	return false, nil
+	return waceapi.DecisionResult{Block: false}, nil
 }
 
 // func CheckResults(transactionID string, modelRes map[string]float64, modelWeight map[string]float64, modelThres map[string]float64, WAFdata map[string]string) (bool, error) {

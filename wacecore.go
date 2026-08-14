@@ -202,14 +202,14 @@ func Analyze(modelsTypeAsString, transactionId string, payload waceapi.HTTPPaylo
 
 // CheckTransaction checks the result of the analysis of the transaction
 // with the given id and decision plugin
-func CheckTransaction(transactionID, decisionPlugin string, wafParams map[string]string) (bool, error) {
+func CheckTransaction(transactionID string, decisionPlugins []string, wafData waceapi.WAFData) (bool, bool, error) {
 	logger := logging.Get()
 	logger.TPrintf(logging.DEBUG, transactionID, "core | checking transaction")
 
 	value, exists := analysisMap.Load(transactionID)
 
 	if !exists {
-		return false, fmt.Errorf("transaction with id %s does not exist", transactionID)
+		return false, false, fmt.Errorf("transaction with id %s does not exist", transactionID)
 	}
 
 	sync := value.(*transactionSync)
@@ -222,13 +222,13 @@ func CheckTransaction(transactionID, decisionPlugin string, wafParams map[string
 	sync.Counter = 0
 
 	logger.TPrintln(logging.DEBUG, transactionID, "core | done, checking data...")
-	res, err := plugins.CheckResult(transactionID, decisionPlugin, wafParams)
+	res, enabledPluginFound, err := plugins.CheckResult(transactionID, decisionPlugins, wafData)
 
 	if err == nil {
 		logger.TPrintf(logging.DEBUG, transactionID, "core | transaction checked successfully. Blocking transaction: %t", res)
 
 		if res {
-			metric, err := meter.Int64Counter("wace.client.request.blocked.total", metric.WithDescription(decisionPlugin))
+			metric, err := meter.Int64Counter("wace.client.request.blocked.total", metric.WithDescription(fmt.Sprintf("%v", decisionPlugins)))
 			if err != nil {
 				logger.TPrintf(logging.WARN, transactionID, "core | failed to record blocked request metric: %v", err.Error())
 			}
@@ -237,7 +237,7 @@ func CheckTransaction(transactionID, decisionPlugin string, wafParams map[string
 	} else {
 		logger.TPrintf(logging.ERROR, transactionID, "core | could not check transaction: %v", err)
 	}
-	return res, err
+	return res, enabledPluginFound, err
 }
 
 // CloseTransaction closes the transaction with the given id

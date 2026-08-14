@@ -32,16 +32,19 @@ type modelPlugin struct {
 	pluginType      configstore.ModelPluginType
 	process         func(waceapi.ModelInput) (waceapi.ModelResults, error)
 	reload          func(map[string]string, metric.Meter) error
-	trainingChannel chan waceapi.ModelResults
+	trainingChannel chan any
 	trainingCtx     context.Context
 	trainingCancel  context.CancelFunc
 }
 
 // decisionPlugin is the struct that stores the decision plugin
 type decisionPlugin struct {
-	p            *plugin.Plugin
-	checkResults func(waceapi.DecisionInput) (bool, error)
-	reload       func(map[string]string, metric.Meter) error
+	p               *plugin.Plugin
+	checkResults    func(waceapi.DecisionInput) (waceapi.DecisionResult, error)
+	reload          func(map[string]string, metric.Meter) error
+	trainingChannel chan any
+	trainingCtx     context.Context
+	trainingCancel  context.CancelFunc
 }
 
 // ModelStatus stores whether there was an error while processing a
@@ -191,13 +194,13 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 				logger.Printf(logging.WARN, "| %s | cannot load plugin: invalid %s function type", data.ID, modelReloadFunction)
 				continue
 			}
-			var trainingChannel chan waceapi.ModelResults
+			var trainingChannel chan any
 			var trainingCtx context.Context
 			var trainingCancel context.CancelFunc
 			if conf.IsInTraining(data.ID) {
-				trainingChannel = make(chan waceapi.ModelResults)
+				trainingChannel = make(chan any)
 				trainingCtx, trainingCancel = context.WithCancel(context.Background())
-				go pm.handleTrainingModel(data.ID, data.TrainingData, trainingCtx, trainingCancel, trainingChannel)
+				go pm.handleTraining(data.ID, data.TrainingData, trainingCtx, trainingCancel, trainingChannel, "Model")
 			}
 			modelPluginLoaded := modelPlugin{p, data.PluginType, processFunc, reload, trainingChannel, trainingCtx, trainingCancel}
 			pm.modelPlugins[data.ID] = modelPluginLoaded
@@ -255,7 +258,7 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 				logger.Printf(logging.ERROR, "| %s | cannot load plugin %s function: %v", data.ID, decisionCheckFuncionName, err)
 				continue
 			}
-			checkResults, ok := checkFunc.(func(waceapi.DecisionInput) (bool, error))
+			checkResults, ok := checkFunc.(func(waceapi.DecisionInput) (waceapi.DecisionResult, error))
 			if !ok {
 				logger.Printf(logging.ERROR, "| %s | %s lookup failed for plugin: invalid function type", data.ID, decisionCheckFuncionName)
 				continue
@@ -271,14 +274,25 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 				logger.Printf(logging.ERROR, "| %s | %s lookup failed for plugin: invalid function type", data.ID, decisionReloadFunctionName)
 				continue
 			}
+			var trainingChannel chan any
+			var trainingCtx context.Context
+			var trainingCancel context.CancelFunc
+			if conf.IsDecisionInTraining(data.ID) {
+				trainingChannel = make(chan any)
+				trainingCtx, trainingCancel = context.WithCancel(context.Background())
+				go pm.handleTraining(data.ID, data.TrainingData, trainingCtx, trainingCancel, trainingChannel, "Decision")
+			}
 
-			decisionPluginLoaded := decisionPlugin{p, checkResults, reload}
+			decisionPluginLoaded := decisionPlugin{p, checkResults, reload, trainingChannel, trainingCtx, trainingCancel}
 			pm.decisionPlugins[data.ID] = decisionPluginLoaded
 		} else {
 			err = dp.reload(data.Params, meter)
 			if err != nil {
 				logger.Printf(logging.WARN, "| %s | cannot reload plugin: %s", data.ID, err.Error())
 				continue
+			}
+			if !conf.IsDecisionInTraining(data.ID) && dp.trainingCancel != nil {
+				dp.trainingCancel()
 			}
 		}
 	}
@@ -418,37 +432,77 @@ func (p *PluginManager) Process(modelID, transactionID string, payload waceapi.H
 }
 
 // CheckResult is in charge of calling the decision plugin with id decisionID over the
-// transaction with id transactID
-func (p *PluginManager) CheckResult(transactionId, decisionId string, wafParams map[string]string) (bool, error) {
+// transaction with id transactionID
+func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, wafData waceapi.WAFData) (bool, bool, error) {
 	logger := logging.Get()
 
-	dp, ok := p.decisionPlugins[decisionId]
+	transactionResults, ok := p.results.Load(transactionID)
 	if !ok {
-		return false, fmt.Errorf("decision plugin not found")
-	}
-
-	transactionResults, ok := p.results.Load(transactionId)
-	if !ok {
-		return false, fmt.Errorf("transaction results not found")
+		return false, false, fmt.Errorf("transaction results not found")
 	}
 
 	cs, err := configstore.Get()
 	if err != nil {
-		return false, nil
+		return false, false, nil
 	}
 
 	modelResultMap := make(map[string]waceapi.ModelResults)
-	modelWeightMap := make(map[string]float64)
 	transactionResults.(*sync.Map).Range(func(key, value interface{}) bool {
 		modelResultMap[key.(string)] = value.(waceapi.ModelResults)
-		modelWeightMap[key.(string)] = cs.ModelPlugins[key.(string)].Weight
 		return true
 	})
 
-	res, err := dp.checkResults(waceapi.DecisionInput{TransactionId: transactionId, Results: modelResultMap, ModelWeight: modelWeightMap, WAFdata: wafParams})
-	logger.TPrintf(logging.INFO, transactionId, "%s | transaction checked. Block: %t ", decisionId, res)
+	enabledPluginFound := false
+	result := false
 
-	return res, err
+	for _, id := range decisionIds {
+		dp, ok := p.decisionPlugins[id]
+		if !ok {
+			return false, false, fmt.Errorf("decision plugin not found")
+		}
+
+		dpConf := cs.DecisionPlugins[id]
+		input := waceapi.DecisionInput{
+			TransactionId: transactionID,
+			Results:       modelResultMap,
+			ModelWeight:   dpConf.ModelWeight,
+			WAFWeight:     dpConf.WAFWeight,
+			WAFdata:       wafData,
+		}
+
+		if dpConf.Training {
+			// Shadow plugin: collect a training sample off the request path,
+			// without affecting the blocking decision.
+			go func() {
+				res, err := dp.checkResults(input)
+				if err != nil {
+					logger.TPrintf(logging.WARN, transactionID, "%s | training check failed, dropping sample: %v", id, err)
+					return
+				}
+				select {
+				case dp.trainingChannel <- res:
+				case <-dp.trainingCtx.Done():
+					logger.TPrintf(logging.DEBUG, transactionID, "training cancelled for decision %s, dropping result", id)
+				}
+			}()
+			continue
+		}
+
+		// Production plugin: at most one is allowed, and it decides the block.
+		if enabledPluginFound {
+			return false, true, fmt.Errorf("multiple enabled decision plugins found")
+		}
+		enabledPluginFound = true
+
+		res, err := dp.checkResults(input)
+		if err != nil {
+			return false, true, err
+		}
+		logger.TPrintf(logging.INFO, transactionID, "%s | transaction checked. Block: %t ", id, res.Block)
+		result = res.Block
+	}
+
+	return result, enabledPluginFound, nil
 }
 
 // ModelResultsHandler listens for messages on the model results queue

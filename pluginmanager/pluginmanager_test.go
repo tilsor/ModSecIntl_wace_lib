@@ -1,6 +1,7 @@
 package pluginmanager
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 	"time"
@@ -46,6 +47,9 @@ var testPlugin = `  - id: "test"
 
 var simplePlugin = `  - id: "simple"
     path: "../testdata/plugins/decision/simple.so"
+    modelweight:
+      trivial: 1
+      trivial2: 1
     decisionbalance: 0.5
 `
 
@@ -241,28 +245,28 @@ func TestPluginManagerCheckResult(t *testing.T) {
 		name      string
 		modelConf string
 		modelID   string
-		wafParams map[string]string
+		wafParams waceapi.WAFData
 		wantBlock bool
 	}{
 		{
 			name:      "trivial (prob=0.0) does not block even with alerting WAF",
 			modelConf: trivialPlugin,
 			modelID:   "trivial",
-			wafParams: map[string]string{"inbound_blocking": "20", "inbound_threshold": "5"},
+			wafParams: waceapi.WAFData{Scores: map[string]float64{"inbound_blocking": 20, "inbound_threshold": 5}},
 			wantBlock: false,
 		},
 		{
 			name:      "trivial2 (prob=1.0) blocks when WAF also alerts",
 			modelConf: trivial2Plugin,
 			modelID:   "trivial2",
-			wafParams: map[string]string{"inbound_blocking": "20", "inbound_threshold": "5"},
+			wafParams: waceapi.WAFData{Scores: map[string]float64{"inbound_blocking": 20, "inbound_threshold": 5}},
 			wantBlock: true,
 		},
 		{
 			name:      "trivial2 does not block with empty WAF data",
 			modelConf: trivial2Plugin,
 			modelID:   "trivial2",
-			wafParams: make(map[string]string),
+			wafParams: waceapi.WAFData{},
 			wantBlock: false,
 		},
 	}
@@ -280,7 +284,7 @@ func TestPluginManagerCheckResult(t *testing.T) {
 			go pm.Process(tt.modelID, txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 			<-ch
 
-			result, err := pm.CheckResult(txID, "simple", tt.wafParams)
+			result, _, err := pm.CheckResult(txID, []string{"simple"}, tt.wafParams)
 			if err != nil {
 				t.Fatalf("CheckResult error: %v", err)
 			}
@@ -299,7 +303,7 @@ func TestPluginManagerCheckResultNonexistentDecision(t *testing.T) {
 	pm.InitTransaction(txID)
 	defer pm.CloseTransaction(txID)
 
-	_, err := pm.CheckResult(txID, "nonexistent", make(map[string]string))
+	_, _, err := pm.CheckResult(txID, []string{"nonexistent"}, waceapi.WAFData{})
 	if err == nil {
 		t.Error("CheckResult with nonexistent decision plugin should return error")
 	}
@@ -320,7 +324,7 @@ func TestPluginManagerTransactionLifecycle(t *testing.T) {
 	}
 
 	// test plugin blocks when anomalyscore >= inboundthreshold
-	result, err := pm.CheckResult(txID, "test", map[string]string{"anomalyscore": "100", "inboundthreshold": "10"})
+	result, _, err := pm.CheckResult(txID, []string{"test"}, waceapi.WAFData{Scores: map[string]float64{"anomalyscore": 100, "inboundthreshold": 10}})
 	if err != nil {
 		t.Fatalf("CheckResult error: %v", err)
 	}
@@ -395,7 +399,7 @@ func TestPluginManagerLoadDecisionFailures(t *testing.T) {
 			pm.InitTransaction(txID)
 			defer pm.CloseTransaction(txID)
 
-			_, err := pm.CheckResult(txID, tt.decisionID, make(map[string]string))
+			_, _, err := pm.CheckResult(txID, []string{tt.decisionID}, waceapi.WAFData{})
 			if err == nil {
 				t.Errorf("CheckResult(%q): expected error (plugin should not have been loaded)", tt.decisionID)
 			}
@@ -588,7 +592,7 @@ func TestPluginManagerCheckResultWithoutTransaction(t *testing.T) {
 	// Deliberately skip pm.InitTransaction — no results entry exists.
 	txID := generateRandomID()
 
-	_, err := pm.CheckResult(txID, "simple", make(map[string]string))
+	_, _, err := pm.CheckResult(txID, []string{"simple"}, waceapi.WAFData{})
 	if err == nil {
 		t.Error("CheckResult without InitTransaction should return error")
 	}
@@ -766,10 +770,10 @@ decisionplugins:
 	<-done // wait until the result has been handed off to the training goroutine
 
 	// WAF params that would cause a block if trivial2's prob=1.0 reached the decision.
-	result, err := pm.CheckResult(txID, "simple", map[string]string{
-		"inbound_blocking":  "20",
-		"inbound_threshold": "5",
-	})
+	result, _, err := pm.CheckResult(txID, []string{"simple"}, waceapi.WAFData{Scores: map[string]float64{
+		"inbound_blocking":  20,
+		"inbound_threshold": 5,
+	}})
 	if err != nil {
 		t.Fatalf("CheckResult error: %v", err)
 	}
@@ -792,5 +796,197 @@ func TestPluginManagerProcessWithoutTransaction(t *testing.T) {
 	status := <-ch
 	if status.Err == nil {
 		t.Error("Process without InitTransaction should return error via channel")
+	}
+}
+
+// ── Decision plugin training ─────────────────────────────────────────────────
+
+// decisionTrainingConf builds a training decision plugin config entry using
+// simple.so, collecting samples to resultPath (and status to statusPath). It
+// weighs trivial2 so the shadow plugin would compute Block=true on its own.
+func decisionTrainingConf(id, resultPath, statusPath string, maxSamples int) string {
+	return fmt.Sprintf(`  - id: %q
+    path: "../testdata/plugins/decision/simple.so"
+    modelweight:
+      trivial2: 1
+    training: true
+    training_data:
+      max_samples: %d
+      result_file_path: %q
+      status_file_path: %q
+`, id, maxSamples, resultPath, statusPath)
+}
+
+// TestPluginManagerDecisionTrainingPluginLoaded verifies that a decision plugin
+// marked training:true is loaded with its channel, context, and cancel function
+// initialised, and that the context is live right after load.
+func TestPluginManagerDecisionTrainingPluginLoaded(t *testing.T) {
+	conf := baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" +
+		decisionTrainingConf("simple_training", "/dev/null", "", 3)
+	pm := setupPluginManager(t, []byte(conf))
+
+	dp, ok := pm.decisionPlugins["simple_training"]
+	if !ok {
+		t.Fatal("training decision plugin was not loaded into decisionPlugins")
+	}
+	if dp.trainingChannel == nil {
+		t.Error("trainingChannel should not be nil for a training decision plugin")
+	}
+	if dp.trainingCtx == nil {
+		t.Error("trainingCtx should not be nil for a training decision plugin")
+	}
+	if dp.trainingCancel == nil {
+		t.Error("trainingCancel should not be nil for a training decision plugin")
+	}
+	select {
+	case <-dp.trainingCtx.Done():
+		t.Error("trainingCtx should not be done immediately after load")
+	default:
+	}
+}
+
+// TestPluginManagerDecisionTrainingCollectsAlongsideProduction verifies that
+// with one production plugin and one training plugin in the list, the block
+// decision comes from the production plugin while the training plugin collects
+// a sample off the request path.
+func TestPluginManagerDecisionTrainingCollectsAlongsideProduction(t *testing.T) {
+	dir := t.TempDir()
+	resultPath := dir + "/decision.ndjson"
+	statusPath := dir + "/decision.status"
+
+	conf := baseConfig + "modelplugins:\n" + trivial2Plugin + "decisionplugins:\n" +
+		simplePlugin + decisionTrainingConf("simple_training", resultPath, statusPath, 1)
+	pm := setupPluginManager(t, []byte(conf))
+	dp := pm.decisionPlugins["simple_training"]
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+
+	ch := make(chan ModelStatus, 1)
+	go pm.Process("trivial2", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	<-ch
+
+	waf := waceapi.WAFData{Scores: map[string]float64{"inbound_blocking": 20, "inbound_threshold": 5}}
+	block, enabled, err := pm.CheckResult(txID, []string{"simple", "simple_training"}, waf)
+	if err != nil {
+		t.Fatalf("CheckResult error: %v", err)
+	}
+	if !enabled {
+		t.Error("enabledPluginFound should be true when a production plugin is present")
+	}
+	if !block {
+		t.Error("production plugin should have blocked (trivial2 prob=1.0 + alerting WAF)")
+	}
+
+	// The training goroutine exits (defer cancel) once it collects max_samples=1.
+	select {
+	case <-dp.trainingCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("training collection did not complete")
+	}
+	if n := countFileLines(t, resultPath); n != 1 {
+		t.Errorf("collected %d samples, want 1", n)
+	}
+}
+
+// TestPluginManagerDecisionTrainingOnlyDoesNotBlock verifies that a call with
+// only training plugins (no production plugin) never blocks — even though the
+// shadow plugin's own CheckResults would return Block=true — and still collects
+// a sample.
+func TestPluginManagerDecisionTrainingOnlyDoesNotBlock(t *testing.T) {
+	dir := t.TempDir()
+	resultPath := dir + "/decision.ndjson"
+	statusPath := dir + "/decision.status"
+
+	conf := baseConfig + "modelplugins:\n" + trivial2Plugin + "decisionplugins:\n" +
+		decisionTrainingConf("simple_training", resultPath, statusPath, 1)
+	pm := setupPluginManager(t, []byte(conf))
+	dp := pm.decisionPlugins["simple_training"]
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+
+	ch := make(chan ModelStatus, 1)
+	go pm.Process("trivial2", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	<-ch
+
+	waf := waceapi.WAFData{Scores: map[string]float64{"inbound_blocking": 20, "inbound_threshold": 5}}
+	block, enabled, err := pm.CheckResult(txID, []string{"simple_training"}, waf)
+	if err != nil {
+		t.Fatalf("CheckResult error: %v", err)
+	}
+	if enabled {
+		t.Error("enabledPluginFound should be false for a training-only call")
+	}
+	if block {
+		t.Error("training-only call must never block, regardless of the shadow plugin's verdict")
+	}
+
+	select {
+	case <-dp.trainingCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("training collection did not complete")
+	}
+	if n := countFileLines(t, resultPath); n != 1 {
+		t.Errorf("collected %d samples, want 1", n)
+	}
+}
+
+// TestPluginManagerMultipleProductionDecisionPlugins verifies that a list with
+// more than one production (non-training) decision plugin is rejected.
+func TestPluginManagerMultipleProductionDecisionPlugins(t *testing.T) {
+	conf := baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" +
+		simplePlugin + testPlugin
+	pm := setupPluginManager(t, []byte(conf))
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+
+	_, _, err := pm.CheckResult(txID, []string{"simple", "test"}, waceapi.WAFData{})
+	if err == nil {
+		t.Error("CheckResult with two production decision plugins should return an error")
+	}
+}
+
+// TestPluginManagerDecisionTrainingReloadDisables verifies that Reload cancels
+// the decision training goroutine when the new config disables training.
+func TestPluginManagerDecisionTrainingReloadDisables(t *testing.T) {
+	conf := baseConfig + "modelplugins:\n" + trivialPlugin + "decisionplugins:\n" +
+		decisionTrainingConf("simple_training", "/dev/null", "", 3)
+	pm := setupPluginManager(t, []byte(conf))
+	dp := pm.decisionPlugins["simple_training"]
+
+	select {
+	case <-dp.trainingCtx.Done():
+		t.Fatal("trainingCtx should be alive before Reload")
+	default:
+	}
+
+	disabledConfig := baseConfig + "modelplugins:\n" + trivialPlugin + `decisionplugins:
+  - id: "simple_training"
+    path: "../testdata/plugins/decision/simple.so"
+`
+	cs, err := configstore.Get()
+	if err != nil {
+		t.Fatalf("configstore.Get: %v", err)
+	}
+	var aux configstore.ConfigFileData
+	if err := yaml.Unmarshal([]byte(disabledConfig), &aux); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := cs.SetConfig(aux); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	select {
+	case <-dp.trainingCtx.Done():
+	case <-time.After(time.Second):
+		t.Error("trainingCtx should be cancelled after Reload with training disabled")
 	}
 }
