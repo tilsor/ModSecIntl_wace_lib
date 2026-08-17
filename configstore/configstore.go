@@ -85,7 +85,7 @@ type modelPluginConfig struct {
 	PluginType   ModelPluginType
 	async        bool
 	remote       bool
-	training     bool
+	Training     bool
 	TrainingData TrainingData
 	sanitize     bool
 }
@@ -181,7 +181,7 @@ func (c *ConfigStore) IsRemote(modelID string) bool {
 
 // IsInTraining returns true if the model plugin is in training mode (collecting data)
 func (c *ConfigStore) IsInTraining(modelID string) bool {
-	return c.ModelPlugins[modelID].training
+	return c.ModelPlugins[modelID].Training
 }
 
 // IsDecisionInTraining returns true if the decision plugin is in training mode (collecting data)
@@ -285,7 +285,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		modelConfig.PluginType, err = StringToPluginType(modelP.PluginType)
 		modelConfig.async = modelP.Async
 		modelConfig.remote = modelP.Remote
-		modelConfig.training = modelP.Training
+		modelConfig.Training = modelP.Training
 		modelConfig.TrainingData = modelP.TrainingData
 		if modelConfig.TrainingData.StatusUpdateInterval == 0 {
 			modelConfig.TrainingData.StatusUpdateInterval = max(1, modelConfig.TrainingData.MaxSamples/10)
