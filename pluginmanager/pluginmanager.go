@@ -465,7 +465,7 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 		input := waceapi.DecisionInput{
 			TransactionId: transactionID,
 			Results:       modelResultMap,
-			ModelWeight:   dpConf.ModelWeight,
+			ModelWeight:   dpConf.ModelWeights,
 			WAFWeight:     dpConf.WAFWeight,
 			WAFdata:       wafData,
 		}

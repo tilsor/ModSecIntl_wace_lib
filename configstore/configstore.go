@@ -79,8 +79,6 @@ type TrainingData struct {
 type modelPluginConfig struct {
 	ID           string
 	Path         string
-	Weight       float64
-	Threshold    float64
 	Params       map[string]string
 	PluginType   ModelPluginType
 	async        bool
@@ -97,7 +95,7 @@ type decisionPluginConfig struct {
 	Params       map[string]string
 	Training     bool
 	TrainingData TrainingData
-	ModelWeight  map[string]float64
+	ModelWeights map[string]float64
 	WAFWeight    float64
 }
 
@@ -139,10 +137,8 @@ func Clean() {
 type configFileModelPlugin struct {
 	ID           string
 	Path         string
-	Weight       float64
-	Threshold    float64
 	Params       map[string]string
-	PluginType   string `yaml:"plugintype"`
+	PluginType   string `yaml:"plugin_type"`
 	Async        bool
 	Remote       bool
 	Training     bool
@@ -154,8 +150,8 @@ type configFileDecisionPlugin struct {
 	ID           string
 	Path         string
 	Params       map[string]string
-	ModelWeight  map[string]float64
-	WAFWeight    float64
+	ModelWeights map[string]float64 `yaml:"model_weights"`
+	WAFWeight    float64            `yaml:"waf_weight"`
 	Training     bool
 	TrainingData TrainingData `yaml:"training_data"`
 }
@@ -163,8 +159,8 @@ type configFileDecisionPlugin struct {
 type ConfigFileData struct {
 	Logpath           string
 	Loglevel          string
-	Modelplugins      []configFileModelPlugin
-	Decisionplugins   []configFileDecisionPlugin
+	ModelPlugins      []configFileModelPlugin    `yaml:"model_plugins"`
+	DecisionPlugins   []configFileDecisionPlugin `yaml:"decision_plugins"`
 	NatsURL           string
 	CredentialHeaders []string `yaml:"credential_headers"`
 }
@@ -220,7 +216,7 @@ func checkConfig(inConf ConfigFileData) error {
 	}
 
 	// check modelplugins
-	for _, modelP := range inConf.Modelplugins {
+	for _, modelP := range inConf.ModelPlugins {
 		if modelP.Path != "" {
 			if _, err := os.Stat(modelP.Path); err != nil {
 				return fmt.Errorf("%s plugin path %s: %v", modelP.ID, modelP.Path, err)
@@ -243,7 +239,7 @@ func checkConfig(inConf ConfigFileData) error {
 		}
 	}
 	// check decisionplugins
-	for _, decisionP := range inConf.Decisionplugins {
+	for _, decisionP := range inConf.DecisionPlugins {
 
 		if decisionP.Path != "" {
 			if _, err := os.Stat(decisionP.Path); err != nil {
@@ -275,12 +271,10 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 	}
 
 	cs.ModelPlugins = make(map[string]modelPluginConfig)
-	for _, modelP := range inConf.Modelplugins {
+	for _, modelP := range inConf.ModelPlugins {
 		var modelConfig modelPluginConfig
 		modelConfig.ID = modelP.ID
 		modelConfig.Path = modelP.Path
-		modelConfig.Weight = modelP.Weight
-		modelConfig.Threshold = modelP.Threshold
 		modelConfig.Params = modelP.Params
 		modelConfig.PluginType, err = StringToPluginType(modelP.PluginType)
 		modelConfig.async = modelP.Async
@@ -298,7 +292,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 	}
 
 	cs.DecisionPlugins = make(map[string]decisionPluginConfig)
-	for _, decisionP := range inConf.Decisionplugins {
+	for _, decisionP := range inConf.DecisionPlugins {
 		var decisionConfig decisionPluginConfig
 		decisionConfig.ID = decisionP.ID
 		decisionConfig.Path = decisionP.Path
@@ -308,7 +302,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		if decisionConfig.TrainingData.StatusUpdateInterval == 0 {
 			decisionConfig.TrainingData.StatusUpdateInterval = max(1, decisionConfig.TrainingData.MaxSamples/10)
 		}
-		decisionConfig.ModelWeight = decisionP.ModelWeight
+		decisionConfig.ModelWeights = decisionP.ModelWeights
 		decisionConfig.WAFWeight = decisionP.WAFWeight
 		cs.DecisionPlugins[decisionConfig.ID] = decisionConfig
 	}

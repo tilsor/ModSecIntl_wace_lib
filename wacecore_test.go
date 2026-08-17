@@ -81,28 +81,26 @@ var wholeResponse = waceapi.HTTPPayload{
 var config = []byte(`---
 logpath: "/dev/null"
 loglevel: DEBUG
-modelplugins:
+model_plugins:
   - id: "trivial"
     path: "testdata/plugins/model/trivial.so"
-    weight: 1
     params:
       d: "sds"
       b: "dnid"
       e: "dofnno"
-    # plugintype: "RequestHeaders"
-    plugintype: "Everything"
+    # plugin_type: "RequestHeaders"
+    plugin_type: "Everything"
   - id: "trivial2"
     path: "testdata/plugins/model/trivial2.so"
-    weight: 2
     params:
       a: "sdsds"
       b: "sdfjdnid"
       c: "kfoskdofnno"
-    plugintype: "Everything"
-decisionplugins:
+    plugin_type: "Everything"
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-    wafweight: 0.5
+    waf_weight: 0.5
     decisionbalance: 0.5
 `)
 
@@ -112,43 +110,37 @@ logpath: "/dev/null"
 loglevel: "WARN"
 
 #The model plugins configuration
-modelplugins:
+model_plugins:
   - id: "trivialRequestHeaders"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialRequestBody"
-    plugintype: RequestBody
+    plugin_type: RequestBody
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialAllRequest"
-    plugintype: AllRequest
+    plugin_type: AllRequest
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialResponseHeaders"
-    plugintype: ResponseHeaders
+    plugin_type: ResponseHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialResponseBody"
-    plugintype: ResponseBody
+    plugin_type: ResponseBody
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialAllResponse"
-    plugintype: AllResponse
+    plugin_type: AllResponse
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
 
 #The decision plugin configuration
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-#    wafweight: 0.5
+#    waf_weight: 0.5
     decisionbalance: 0.1
 `)
 
@@ -158,24 +150,22 @@ logpath: "/dev/null"
 loglevel: "WARN"
 
 #The model plugins configuration
-modelplugins:
+model_plugins:
   - id: "trivial"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 1
     mode: sync
   - id: "trivial2"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial2.so"
-    weight: 2
     mode: sync
 
 #The decision plugin configuration
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-#    wafweight: 0.5
-    modelweight:
+#    waf_weight: 0.5
+    model_weights:
       trivial: 1
       trivial2: 1
     decisionbalance: 0.1
@@ -187,24 +177,22 @@ logpath: "/dev/null"
 loglevel: "WARN"
 
 #The model plugins configuration
-modelplugins:
+model_plugins:
   - id: "trivial"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 1
     mode: sync
     remote: true
   - id: "trivial2"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial2.so"
-    weight: 2
     mode: sync
     remote: true
 #The decision plugin configuration
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-#    wafweight: 0.5
+#    waf_weight: 0.5
     decisionbalance: 0.1
 `)
 
@@ -214,22 +202,20 @@ logpath: "/dev/null"
 loglevel: "WARN"
 
 #The model plugins configuration
-modelplugins:
+model_plugins:
   - id: "trivial"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 1
     async: true
   - id: "trivial2"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial2.so"
-    weight: 2
     async: true
 #The decision plugin configuration
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-#    wafweight: 0.5
+#    waf_weight: 0.5
     decisionbalance: 0.1
 `)
 
@@ -419,10 +405,10 @@ func TestInitInvalidConfig(t *testing.T) {
 	badConfig := []byte(`---
 logpath: "/dev/null"
 loglevel: "ERROR"
-modelplugins:
+model_plugins:
   - id: "missing"
     path: "testdata/plugins/model/does_not_exist.so"
-    plugintype: "Everything"
+    plugin_type: "Everything"
 `)
 	var aux configstore.ConfigFileData
 	if err := yaml.Unmarshal(badConfig, &aux); err != nil {
@@ -628,15 +614,14 @@ func configParamWith(result string) []byte {
 	return []byte(`---
 logpath: "/dev/null"
 loglevel: "WARN"
-modelplugins:
+model_plugins:
   - id: "param"
     path: "testdata/plugins/model/param.so"
-    weight: 1
-    plugintype: "Everything"
+    plugin_type: "Everything"
     mode: sync
     params:
       result: "` + result + `"
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
     decisionbalance: 0.5

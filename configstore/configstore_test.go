@@ -12,30 +12,26 @@ import (
 var validConfig = []byte(`---
 logpath: "/dev/stderr"
 loglevel: "DEBUG"
-modelplugins:
+model_plugins:
   - id: "trivial"
     path: "../testdata/plugins/model/trivial.so"
-    weight: 1
-    threshold: 0.5
     params:
       d: "sds"
       b: "dnid"
       e: "dofnno"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
     mode: "sync"
   - id: "trivial2"
     path: "../testdata/plugins/model/trivial2.so"
-    weight: 2
-    threshold: 0.1
     params:
       a: "sdsds"
       b: "sdfjdnid"
       c: "kfoskdofnno"
-    plugintype: "RequestHeaders"
-decisionplugins:
+    plugin_type: "RequestHeaders"
+decision_plugins:
   - id: "test"
     path: "../testdata/plugins/decision/test.so"
-    wafweight: 0.5
+    waf_weight: 0.5
     decisionbalance: 0.5
     params:
       ssdaf: "sdsds"
@@ -150,10 +146,10 @@ func TestLoadConfigYamlPluginType(t *testing.T) {
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: InvalidPluginType
+    plugin_type: InvalidPluginType
 `,
 			wantErr: true,
 		},
@@ -162,10 +158,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: ""
+    plugin_type: ""
 `,
 			wantErr: true,
 		},
@@ -174,10 +170,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/nonexistent.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
 `,
 			wantErr: true,
 		},
@@ -186,10 +182,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: ""
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
 `,
 			wantErr: true,
 		},
@@ -198,7 +194,7 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-decisionplugins:
+decision_plugins:
   - id: "test"
     path: ""
 `,
@@ -209,7 +205,7 @@ decisionplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-decisionplugins:
+decision_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/decision/nonexistent.so"
 `,
@@ -220,10 +216,10 @@ decisionplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
 `,
 			wantType: "RequestHeaders",
 		},
@@ -232,10 +228,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestBody"
+    plugin_type: "RequestBody"
 `,
 			wantType: "RequestBody",
 		},
@@ -244,10 +240,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "AllRequest"
+    plugin_type: "AllRequest"
 `,
 			wantType: "AllRequest",
 		},
@@ -256,10 +252,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "ResponseHeaders"
+    plugin_type: "ResponseHeaders"
 `,
 			wantType: "ResponseHeaders",
 		},
@@ -268,10 +264,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "ResponseBody"
+    plugin_type: "ResponseBody"
 `,
 			wantType: "ResponseBody",
 		},
@@ -280,10 +276,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "AllResponse"
+    plugin_type: "AllResponse"
 `,
 			wantType: "AllResponse",
 		},
@@ -292,10 +288,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "Everything"
+    plugin_type: "Everything"
 `,
 			wantType: "Everything",
 		},
@@ -504,10 +500,10 @@ func TestIsAsync(t *testing.T) {
 			config := fmt.Sprintf(`---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
     async: %v
 `, tt.async)
 			if err := initialize([]byte(config)); err != nil {
@@ -556,10 +552,10 @@ func TestIsInTraining(t *testing.T) {
 			config := fmt.Sprintf(`---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
     training: %v%s
 `, tt.training, trainingSection)
 			if err := initialize([]byte(config)); err != nil {
@@ -586,10 +582,10 @@ func TestTrainingDataConfig(t *testing.T) {
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
     training: true
 `,
 			wantErr: true,
@@ -599,10 +595,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
     training: true
     async: true
     training_data:
@@ -615,10 +611,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
     training: true
     remote: true
     training_data:
@@ -631,10 +627,10 @@ modelplugins:
 			config: `---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
     training: true
     training_data:
       max_samples: 42
@@ -704,10 +700,10 @@ func TestTrainingDataStatusUpdateInterval(t *testing.T) {
 			config := fmt.Sprintf(`---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
     training: true
     training_data:
       max_samples: %d%s
@@ -746,10 +742,10 @@ func TestShouldSanitize(t *testing.T) {
 			config := fmt.Sprintf(`---
 loglevel: ERROR
 logpath: /dev/null
-modelplugins:
+model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
-    plugintype: "RequestHeaders"
+    plugin_type: "RequestHeaders"
     sanitize: %v
 `, tt.sanitize)
 			if err := initialize([]byte(config)); err != nil {
