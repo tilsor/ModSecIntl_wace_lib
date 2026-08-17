@@ -6,7 +6,6 @@ package wace
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
@@ -27,15 +26,17 @@ var ctx = context.Background()
 var meter metric.Meter
 
 // transactionSync is a struct to syncronize the analysis of a given
-// transaction. Each time callPlugins is executed, the counter is
-// incremented. At the end of each callPlugins execution, a message is
-// sent through the channel, to signal checkTransaction that it has
-// finished analyzing the request. checkTransaction waits for Counter
-// number of messages in the channel, before calling the decision
-// plugin and sending the result to the client.
+// transaction. Each time callPlugins is launched (once per Analyze
+// call), wg.Add(1) is called. At the end of each callPlugins
+// execution, wg.Done() is called, to signal CheckTransaction/
+// CloseTransaction that it has finished analyzing the request.
+// CheckTransaction and CloseTransaction call wg.Wait() to block until
+// every in-flight callPlugins invocation for the transaction has
+// finished, which guarantees CloseTransaction never tears down the
+// plugin manager's channels while a model plugin goroutine may still
+// be sending on them.
 type transactionSync struct {
-	Channel chan string
-	Counter int64
+	wg sync.WaitGroup
 }
 
 var (
@@ -44,18 +45,11 @@ var (
 	analysisMap sync.Map
 )
 
-// addTransactionAnalysis adds a transaction to the analysis map. If the
-// transaction already exists, it increments the counter of the transaction
-// by one.
+// addTransactionAnalysis registers one more pending callPlugins invocation
+// for the transaction, creating its transactionSync entry if needed.
 func addTransactionAnalysis(transactionID string) {
-	tSync := transactionSync{
-		Channel: make(chan string),
-		Counter: 1,
-	}
-	value, loaded := analysisMap.LoadOrStore(transactionID, &tSync)
-	if loaded {
-		atomic.AddInt64(&value.(*transactionSync).Counter, 1)
-	}
+	value, _ := analysisMap.LoadOrStore(transactionID, &transactionSync{})
+	value.(*transactionSync).wg.Add(1)
 }
 
 // callPlugins calls the model plugins in the given list, with the given input.
@@ -166,8 +160,7 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 		logger.TPrintf(logging.ERROR, transactionID, "core | could not find transaction %s in analysis map", transactionID)
 		return fmt.Errorf("core | could not find transaction %s in analysis map", transactionID)
 	}
-	analysisChan := value.(*transactionSync).Channel
-	analysisChan <- "done"
+	value.(*transactionSync).wg.Done()
 	return nil
 }
 
@@ -176,11 +169,7 @@ func InitTransaction(transactionId string) {
 	logger := logging.Get()
 	logger.StartTransaction(transactionId)
 	logger.TPrintf(logging.DEBUG, transactionId, "core | initializing transaction")
-	tSync := transactionSync{
-		Channel: make(chan string),
-		Counter: 0,
-	}
-	analysisMap.Store(transactionId, &tSync)
+	analysisMap.Store(transactionId, &transactionSync{})
 	plugins.InitTransaction(transactionId)
 }
 
@@ -212,14 +201,11 @@ func CheckTransaction(transactionID string, decisionPlugins []string, wafData wa
 		return false, false, fmt.Errorf("transaction with id %s does not exist", transactionID)
 	}
 
-	sync := value.(*transactionSync)
+	tSync := value.(*transactionSync)
 
 	logger.TPrintln(logging.DEBUG, transactionID, "core | waiting for all models to finish...")
 
-	for i := 0; i < int(sync.Counter); i++ {
-		<-sync.Channel
-	}
-	sync.Counter = 0
+	tSync.wg.Wait()
 
 	logger.TPrintln(logging.DEBUG, transactionID, "core | done, checking data...")
 	res, enabledPluginFound, err := plugins.CheckResult(transactionID, decisionPlugins, wafData)
@@ -241,20 +227,23 @@ func CheckTransaction(transactionID string, decisionPlugins []string, wafData wa
 }
 
 // CloseTransaction closes the transaction with the given id
-// removing the transaction sync model results
+// removing the transaction sync model results. It waits for any
+// callPlugins invocation still in flight for this transaction to
+// finish before tearing down the plugin manager's channels, so a
+// model plugin goroutine never sends on a channel that has already
+// been closed.
 func CloseTransaction(transactionID string) {
-	plugins.CloseTransaction(transactionID)
-	value, ok := analysisMap.Load(transactionID)
 	logger := logging.Get()
+	value, ok := analysisMap.Load(transactionID)
 
 	if !ok {
 		logger.TPrintf(logging.ERROR, transactionID, "Analysis for transaction %s not found", transactionID)
-	} else {
-		close(value.(*transactionSync).Channel)
-		for range value.(*transactionSync).Channel {
-		}
-		analysisMap.Delete(transactionID)
+		return
 	}
+
+	value.(*transactionSync).wg.Wait()
+	plugins.CloseTransaction(transactionID)
+	analysisMap.Delete(transactionID)
 }
 
 // Reload applies a new configuration and reloads all plugins.
