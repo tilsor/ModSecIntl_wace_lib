@@ -120,20 +120,20 @@ func writeStatus(status TrainingStatus, filePath string) error {
 	return os.Rename(tmp, filePath)
 }
 
-func (p *PluginManager) handleTrainingModel(modelID string, td configstore.TrainingData, ctx context.Context, cancel context.CancelFunc, tc chan waceapi.ModelResults) {
+func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, ctx context.Context, cancel context.CancelFunc, tc chan any, kind string) {
 	defer cancel()
 	logger := logging.Get()
-	logger.Printf(logging.INFO, "Model %s | Handling training data\n", modelID)
+	logger.Printf(logging.INFO, "%s %s | Handling training data\n", kind, ID)
 
 	// Check existing status file before doing any work.
 	createdAt := time.Now()
 	existing, err := loadStatus(td.StatusFilePath)
 	if err != nil {
-		logger.Printf(logging.ERROR, "Model %s | Error loading status file: %s", modelID, err.Error())
+		logger.Printf(logging.ERROR, "%s %s | Error loading status file: %s", kind, ID, err.Error())
 	}
 	if existing != nil {
 		if existing.Status == Done || existing.Status == Error {
-			logger.Printf(logging.INFO, "Model %s | Training already %s, skipping collection\n", modelID, existing.Status)
+			logger.Printf(logging.INFO, "%s %s | Training already %s, skipping collection\n", kind, ID, existing.Status)
 			return
 		}
 		createdAt = existing.CreatedAt
@@ -141,7 +141,7 @@ func (p *PluginManager) handleTrainingModel(modelID string, td configstore.Train
 
 	f, err := os.OpenFile(td.ResultFilePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		logger.Printf(logging.ERROR, "Model %s | Error handling data: %s", modelID, err.Error())
+		logger.Printf(logging.ERROR, "%s %s | Error handling data: %s", kind, ID, err.Error())
 		return
 	}
 	defer f.Close()
@@ -153,7 +153,7 @@ func (p *PluginManager) handleTrainingModel(modelID string, td configstore.Train
 		collectedSamples++
 	}
 	if err := scanner.Err(); err != nil {
-		logger.Printf(logging.ERROR, "Model %s | Error handling data: %s", modelID, err.Error())
+		logger.Printf(logging.ERROR, "%s %s | Error handling data: %s", kind, ID, err.Error())
 		return
 	}
 
@@ -167,34 +167,34 @@ func (p *PluginManager) handleTrainingModel(modelID string, td configstore.Train
 	}
 
 	if collectedSamples >= td.MaxSamples {
-		logger.Printf(logging.INFO, "Model %s | The maximum number of samples has already been written.\n", modelID)
+		logger.Printf(logging.INFO, "%s %s | The maximum number of samples has already been written.\n", kind, ID)
 		status.Status = Done
 		if err := writeStatus(status, td.StatusFilePath); err != nil {
-			logger.Printf(logging.ERROR, "Model %s | Error writing status: %s", modelID, err.Error())
+			logger.Printf(logging.ERROR, "%s %s | Error writing status: %s", kind, ID, err.Error())
 		}
 		return
 	}
 
-	logger.Printf(logging.INFO, "Model %s | Previously amount of samples written %d\n", modelID, collectedSamples)
+	logger.Printf(logging.INFO, "%s %s | Previously amount of samples written %d\n", kind, ID, collectedSamples)
 	if collectedSamples >= td.MinSamples {
 		status.Status = Ready
 	} else {
 		status.Status = Collecting
 	}
 	if err := writeStatus(status, td.StatusFilePath); err != nil {
-		logger.Printf(logging.ERROR, "Model %s | Error writing status: %s", modelID, err.Error())
+		logger.Printf(logging.ERROR, "%s %s | Error writing status: %s", kind, ID, err.Error())
 	}
 
 	for collectedSamples < td.MaxSamples {
 		select {
 		case data := <-tc:
-			logger.Printf(logging.DEBUG, "Model %s | Recieved data %v", modelID, data)
+			logger.Printf(logging.DEBUG, "%s %s | Recieved data %v", kind, ID, data)
 			if err := encoder.Encode(data); err != nil {
-				logger.Printf(logging.ERROR, "Model %s | Error writing data: %s", modelID, err.Error())
+				logger.Printf(logging.ERROR, "%s %s | Error writing data: %s", kind, ID, err.Error())
 				status.Status = Error
 				status.ErrorMsg = err.Error()
 				if err := writeStatus(status, td.StatusFilePath); err != nil {
-					logger.Printf(logging.ERROR, "Model %s | Error writing status: %s", modelID, err.Error())
+					logger.Printf(logging.ERROR, "%s %s | Error writing status: %s", kind, ID, err.Error())
 				}
 				return
 			}
@@ -208,16 +208,16 @@ func (p *PluginManager) handleTrainingModel(modelID string, td configstore.Train
 			}
 			if collectedSamples == td.MinSamples || collectedSamples == td.MaxSamples || (td.StatusUpdateInterval > 0 && collectedSamples%td.StatusUpdateInterval == 0) {
 				if err := writeStatus(status, td.StatusFilePath); err != nil {
-					logger.Printf(logging.ERROR, "Model %s | Error writing status: %s", modelID, err.Error())
+					logger.Printf(logging.ERROR, "%s %s | Error writing status: %s", kind, ID, err.Error())
 				}
 			}
 		case <-ctx.Done():
-			logger.Printf(logging.DEBUG, "Model %s | Training cancelled\n", modelID)
+			logger.Printf(logging.DEBUG, "%s %s | Training cancelled\n", kind, ID)
 			return
 		}
 	}
 
-	logger.Printf(logging.INFO, "Model %s | Data collection for training completed.\n", modelID)
+	logger.Printf(logging.INFO, "%s %s | Data collection for training completed.\n", kind, ID)
 }
 
 // ProcessTraining is in charge of calling the model plugin with id modelID

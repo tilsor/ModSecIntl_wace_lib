@@ -79,22 +79,24 @@ type TrainingData struct {
 type modelPluginConfig struct {
 	ID           string
 	Path         string
-	Weight       float64
-	Threshold    float64
 	Params       map[string]string
 	PluginType   ModelPluginType
 	async        bool
 	remote       bool
-	training     bool
+	Training     bool
 	TrainingData TrainingData
 	sanitize     bool
 }
 
 // DecisionPluginConfig stores the configuration of a decision plugin
 type decisionPluginConfig struct {
-	ID     string
-	Path   string
-	Params map[string]string
+	ID           string
+	Path         string
+	Params       map[string]string
+	Training     bool
+	TrainingData TrainingData
+	ModelWeights map[string]float64
+	WAFWeight    float64
 }
 
 // ConfigStore stores all wacecore configuration from the config file.
@@ -135,10 +137,8 @@ func Clean() {
 type configFileModelPlugin struct {
 	ID           string
 	Path         string
-	Weight       float64
-	Threshold    float64
 	Params       map[string]string
-	PluginType   string `yaml:"plugintype"`
+	PluginType   string `yaml:"plugin_type"`
 	Async        bool
 	Remote       bool
 	Training     bool
@@ -147,16 +147,20 @@ type configFileModelPlugin struct {
 }
 
 type configFileDecisionPlugin struct {
-	ID     string
-	Path   string
-	Params map[string]string
+	ID           string
+	Path         string
+	Params       map[string]string
+	ModelWeights map[string]float64 `yaml:"model_weights"`
+	WAFWeight    float64            `yaml:"waf_weight"`
+	Training     bool
+	TrainingData TrainingData `yaml:"training_data"`
 }
 
 type ConfigFileData struct {
 	Logpath           string
 	Loglevel          string
-	Modelplugins      []configFileModelPlugin
-	Decisionplugins   []configFileDecisionPlugin
+	ModelPlugins      []configFileModelPlugin    `yaml:"model_plugins"`
+	DecisionPlugins   []configFileDecisionPlugin `yaml:"decision_plugins"`
 	NatsURL           string
 	CredentialHeaders []string `yaml:"credential_headers"`
 }
@@ -173,7 +177,12 @@ func (c *ConfigStore) IsRemote(modelID string) bool {
 
 // IsInTraining returns true if the model plugin is in training mode (collecting data)
 func (c *ConfigStore) IsInTraining(modelID string) bool {
-	return c.ModelPlugins[modelID].training
+	return c.ModelPlugins[modelID].Training
+}
+
+// IsDecisionInTraining returns true if the decision plugin is in training mode (collecting data)
+func (c *ConfigStore) IsDecisionInTraining(decisionID string) bool {
+	return c.DecisionPlugins[decisionID].Training
 }
 
 func (c *ConfigStore) ShouldSanitize(modelID string) bool {
@@ -207,7 +216,7 @@ func checkConfig(inConf ConfigFileData) error {
 	}
 
 	// check modelplugins
-	for _, modelP := range inConf.Modelplugins {
+	for _, modelP := range inConf.ModelPlugins {
 		if modelP.Path != "" {
 			if _, err := os.Stat(modelP.Path); err != nil {
 				return fmt.Errorf("%s plugin path %s: %v", modelP.ID, modelP.Path, err)
@@ -230,7 +239,7 @@ func checkConfig(inConf ConfigFileData) error {
 		}
 	}
 	// check decisionplugins
-	for _, decisionP := range inConf.Decisionplugins {
+	for _, decisionP := range inConf.DecisionPlugins {
 
 		if decisionP.Path != "" {
 			if _, err := os.Stat(decisionP.Path); err != nil {
@@ -238,6 +247,10 @@ func checkConfig(inConf ConfigFileData) error {
 			}
 		} else {
 			return fmt.Errorf("%s plugin path is empty, please provide a valid path", decisionP.ID)
+		}
+		if decisionP.Training && (decisionP.TrainingData.MaxSamples <= 0 || decisionP.TrainingData.MinSamples < 0 ||
+			decisionP.TrainingData.MaxSamples < decisionP.TrainingData.MinSamples || decisionP.TrainingData.MaxSamples < decisionP.TrainingData.StatusUpdateInterval) {
+			return fmt.Errorf("decision %s: Max sample count should be greater than 0. Min sample count should be greater than or equal 0. Max sample count should be greater than or equal min sample count. Max sample count should be greater than or equal status update interval", decisionP.ID)
 		}
 	}
 
@@ -258,17 +271,15 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 	}
 
 	cs.ModelPlugins = make(map[string]modelPluginConfig)
-	for _, modelP := range inConf.Modelplugins {
+	for _, modelP := range inConf.ModelPlugins {
 		var modelConfig modelPluginConfig
 		modelConfig.ID = modelP.ID
 		modelConfig.Path = modelP.Path
-		modelConfig.Weight = modelP.Weight
-		modelConfig.Threshold = modelP.Threshold
 		modelConfig.Params = modelP.Params
 		modelConfig.PluginType, err = StringToPluginType(modelP.PluginType)
 		modelConfig.async = modelP.Async
 		modelConfig.remote = modelP.Remote
-		modelConfig.training = modelP.Training
+		modelConfig.Training = modelP.Training
 		modelConfig.TrainingData = modelP.TrainingData
 		if modelConfig.TrainingData.StatusUpdateInterval == 0 {
 			modelConfig.TrainingData.StatusUpdateInterval = max(1, modelConfig.TrainingData.MaxSamples/10)
@@ -281,11 +292,18 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 	}
 
 	cs.DecisionPlugins = make(map[string]decisionPluginConfig)
-	for _, decisionP := range inConf.Decisionplugins {
+	for _, decisionP := range inConf.DecisionPlugins {
 		var decisionConfig decisionPluginConfig
 		decisionConfig.ID = decisionP.ID
 		decisionConfig.Path = decisionP.Path
 		decisionConfig.Params = decisionP.Params
+		decisionConfig.Training = decisionP.Training
+		decisionConfig.TrainingData = decisionP.TrainingData
+		if decisionConfig.TrainingData.StatusUpdateInterval == 0 {
+			decisionConfig.TrainingData.StatusUpdateInterval = max(1, decisionConfig.TrainingData.MaxSamples/10)
+		}
+		decisionConfig.ModelWeights = decisionP.ModelWeights
+		decisionConfig.WAFWeight = decisionP.WAFWeight
 		cs.DecisionPlugins[decisionConfig.ID] = decisionConfig
 	}
 

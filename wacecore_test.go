@@ -81,28 +81,26 @@ var wholeResponse = waceapi.HTTPPayload{
 var config = []byte(`---
 logpath: "/dev/null"
 loglevel: DEBUG
-modelplugins:
+model_plugins:
   - id: "trivial"
     path: "testdata/plugins/model/trivial.so"
-    weight: 1
     params:
       d: "sds"
       b: "dnid"
       e: "dofnno"
-    # plugintype: "RequestHeaders"
-    plugintype: "Everything"
+    # plugin_type: "RequestHeaders"
+    plugin_type: "Everything"
   - id: "trivial2"
     path: "testdata/plugins/model/trivial2.so"
-    weight: 2
     params:
       a: "sdsds"
       b: "sdfjdnid"
       c: "kfoskdofnno"
-    plugintype: "Everything"
-decisionplugins:
+    plugin_type: "Everything"
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-    wafweight: 0.5
+    waf_weight: 0.5
     decisionbalance: 0.5
 `)
 
@@ -112,43 +110,37 @@ logpath: "/dev/null"
 loglevel: "WARN"
 
 #The model plugins configuration
-modelplugins:
+model_plugins:
   - id: "trivialRequestHeaders"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialRequestBody"
-    plugintype: RequestBody
+    plugin_type: RequestBody
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialAllRequest"
-    plugintype: AllRequest
+    plugin_type: AllRequest
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialResponseHeaders"
-    plugintype: ResponseHeaders
+    plugin_type: ResponseHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialResponseBody"
-    plugintype: ResponseBody
+    plugin_type: ResponseBody
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
   - id: "trivialAllResponse"
-    plugintype: AllResponse
+    plugin_type: AllResponse
     path: "testdata/plugins/model/trivial.so"
-    weight: 0.1
     mode: sync
 
 #The decision plugin configuration
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-#    wafweight: 0.5
+#    waf_weight: 0.5
     decisionbalance: 0.1
 `)
 
@@ -158,23 +150,24 @@ logpath: "/dev/null"
 loglevel: "WARN"
 
 #The model plugins configuration
-modelplugins:
+model_plugins:
   - id: "trivial"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 1
     mode: sync
   - id: "trivial2"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial2.so"
-    weight: 2
     mode: sync
 
 #The decision plugin configuration
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-#    wafweight: 0.5
+#    waf_weight: 0.5
+    model_weights:
+      trivial: 1
+      trivial2: 1
     decisionbalance: 0.1
 `)
 
@@ -184,24 +177,22 @@ logpath: "/dev/null"
 loglevel: "WARN"
 
 #The model plugins configuration
-modelplugins:
+model_plugins:
   - id: "trivial"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 1
     mode: sync
     remote: true
   - id: "trivial2"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial2.so"
-    weight: 2
     mode: sync
     remote: true
 #The decision plugin configuration
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-#    wafweight: 0.5
+#    waf_weight: 0.5
     decisionbalance: 0.1
 `)
 
@@ -211,22 +202,20 @@ logpath: "/dev/null"
 loglevel: "WARN"
 
 #The model plugins configuration
-modelplugins:
+model_plugins:
   - id: "trivial"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial.so"
-    weight: 1
     async: true
   - id: "trivial2"
-    plugintype: RequestHeaders
+    plugin_type: RequestHeaders
     path: "testdata/plugins/model/trivial2.so"
-    weight: 2
     async: true
 #The decision plugin configuration
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
-#    wafweight: 0.5
+#    waf_weight: 0.5
     decisionbalance: 0.1
 `)
 
@@ -328,7 +317,7 @@ func TestAnalyze(t *testing.T) {
 				}
 			}
 
-			_, err = CheckTransaction(transactionID, "simple", make(map[string]string))
+			_, _, err = CheckTransaction(transactionID, []string{"simple"}, waceapi.WAFData{})
 			if err != nil {
 				t.Errorf("CheckTransaction: %v", err)
 			}
@@ -343,7 +332,7 @@ func TestAnalyze(t *testing.T) {
 }
 
 func TestCheckInvalidTransaction(t *testing.T) {
-	_, err := CheckTransaction("INEXISTENT", "simple", make(map[string]string))
+	_, _, err := CheckTransaction("INEXISTENT", []string{"simple"}, waceapi.WAFData{})
 	if err == nil {
 		t.Errorf("Error: CheckTransaction with inexistent transaction does not rise an error")
 	}
@@ -360,19 +349,14 @@ func TestCheckAttackTransaction(t *testing.T) {
 
 	InitTransaction(transactionID)
 
-	wafParams := make(map[string]string)
-	auxString := "COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=20,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2"
-	for _, score := range strings.Split(auxString, ",") {
-		scoreParts := strings.Split(score, "=")
-		wafParams[scoreParts[0]] = scoreParts[1]
-	}
+	wafParams := parseWAFParams("COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=20,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2")
 
 	err = Analyze("RequestHeaders", transactionID, requestHeadersPayload, []string{"trivial", "trivial2", "trivial3"})
 	if err != nil {
 		t.Errorf("Error: Analyze RequestHeaders: %s", err.Error())
 	}
 
-	res, err := CheckTransaction(transactionID, "simple", wafParams)
+	res, _, err := CheckTransaction(transactionID, []string{"simple"}, wafParams)
 	if err != nil {
 		t.Errorf("Error: CheckTransaction: %s", err.Error())
 	}
@@ -421,10 +405,10 @@ func TestInitInvalidConfig(t *testing.T) {
 	badConfig := []byte(`---
 logpath: "/dev/null"
 loglevel: "ERROR"
-modelplugins:
+model_plugins:
   - id: "missing"
     path: "testdata/plugins/model/does_not_exist.so"
-    plugintype: "Everything"
+    plugin_type: "Everything"
 `)
 	var aux configstore.ConfigFileData
 	if err := yaml.Unmarshal(badConfig, &aux); err != nil {
@@ -459,22 +443,25 @@ func TestCheckNonexistentDecisionPlugin(t *testing.T) {
 	InitTransaction(transactionID)
 	defer CloseTransaction(transactionID)
 
-	_, err = CheckTransaction(transactionID, "nonexistent_plugin", make(map[string]string))
+	_, _, err = CheckTransaction(transactionID, []string{"nonexistent_plugin"}, waceapi.WAFData{})
 	if err == nil {
 		t.Errorf("CheckTransaction with nonexistent decision plugin should return error")
 	}
 }
 
-// parseWAFParams parses a comma-separated "key=value" string into a map.
-func parseWAFParams(s string) map[string]string {
-	params := make(map[string]string)
+// parseWAFParams parses a comma-separated "key=value" string into WAFData,
+// keeping only entries whose value parses as a float64 score.
+func parseWAFParams(s string) waceapi.WAFData {
+	scores := make(map[string]float64)
 	for _, pair := range strings.Split(s, ",") {
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) == 2 {
-			params[parts[0]] = parts[1]
+			if v, err := strconv.ParseFloat(parts[1], 64); err == nil {
+				scores[parts[0]] = v
+			}
 		}
 	}
-	return params
+	return waceapi.WAFData{Scores: scores}
 }
 
 func TestCheckTransactionResult(t *testing.T) {
@@ -485,7 +472,7 @@ func TestCheckTransactionResult(t *testing.T) {
 		name      string
 		config    []byte
 		models    []string
-		wafParams map[string]string
+		wafParams waceapi.WAFData
 		wantBlock bool
 	}{
 		{
@@ -536,7 +523,7 @@ func TestCheckTransactionResult(t *testing.T) {
 				}
 			}
 
-			blocked, err := CheckTransaction(txID, "simple", tt.wafParams)
+			blocked, _, err := CheckTransaction(txID, []string{"simple"}, tt.wafParams)
 			if err != nil {
 				t.Fatalf("CheckTransaction: %v", err)
 			}
@@ -575,7 +562,7 @@ func TestAnalyzeMultiPhase(t *testing.T) {
 		}
 	}
 
-	_, err = CheckTransaction(txID, "simple", make(map[string]string))
+	_, _, err = CheckTransaction(txID, []string{"simple"}, waceapi.WAFData{})
 	if err != nil {
 		t.Errorf("CheckTransaction after multi-phase analysis: %v", err)
 	}
@@ -604,7 +591,7 @@ func TestConcurrentTransactions(t *testing.T) {
 				return
 			}
 
-			if _, err := CheckTransaction(txID, "simple", wafParams); err != nil {
+			if _, _, err := CheckTransaction(txID, []string{"simple"}, wafParams); err != nil {
 				errs <- fmt.Errorf("CheckTransaction: %w", err)
 				CloseTransaction(txID)
 				return
@@ -627,15 +614,14 @@ func configParamWith(result string) []byte {
 	return []byte(`---
 logpath: "/dev/null"
 loglevel: "WARN"
-modelplugins:
+model_plugins:
   - id: "param"
     path: "testdata/plugins/model/param.so"
-    weight: 1
-    plugintype: "Everything"
+    plugin_type: "Everything"
     mode: sync
     params:
       result: "` + result + `"
-decisionplugins:
+decision_plugins:
   - id: "simple"
     path: "testdata/plugins/decision/simple.so"
     decisionbalance: 0.5
@@ -665,7 +651,7 @@ func TestReload(t *testing.T) {
 	if err := Analyze("Everything", txID, waceapi.HTTPPayload{URI: "/test"}, []string{"param"}); err != nil {
 		t.Fatalf("Analyze after Reload: %v", err)
 	}
-	if _, err := CheckTransaction(txID, "simple", make(map[string]string)); err != nil {
+	if _, _, err := CheckTransaction(txID, []string{"simple"}, waceapi.WAFData{}); err != nil {
 		t.Fatalf("CheckTransaction after Reload: %v", err)
 	}
 }
@@ -677,19 +663,14 @@ func BenchmarkTrivial(b *testing.B) {
 		b.Errorf("Error initing test: %v", err)
 	}
 
-	wafParams := make(map[string]string)
-	auxString := "COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2"
-	for _, score := range strings.Split(auxString, ",") {
-		scoreParts := strings.Split(score, "=")
-		wafParams[scoreParts[0]] = scoreParts[1]
-	}
+	wafParams := parseWAFParams("COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2")
 	for i := 0; i < b.N; i++ {
 		transactionId := strconv.Itoa(i)
 		InitTransaction(transactionId)
 
 		Analyze("RequestHeaders", transactionId, waceapi.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
 
-		_, err := CheckTransaction(transactionId, "simple", wafParams)
+		_, _, err := CheckTransaction(transactionId, []string{"simple"}, wafParams)
 		if err != nil {
 			b.Errorf("Error checking transaction: %v", err)
 		}
@@ -705,19 +686,14 @@ func BenchmarkTrivialFullNATS(b *testing.B) {
 	}
 
 	time.Sleep(2 * time.Millisecond)
-	wafParams := make(map[string]string)
-	auxString := "COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2"
-	for _, score := range strings.Split(auxString, ",") {
-		scoreParts := strings.Split(score, "=")
-		wafParams[scoreParts[0]] = scoreParts[1]
-	}
+	wafParams := parseWAFParams("COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2")
 	for i := 0; i < b.N; i++ {
 		transactionId := generateRandomID()
 		InitTransaction(transactionId)
 
 		Analyze("RequestHeaders", transactionId, waceapi.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
 
-		_, err := CheckTransaction(transactionId, "simple", wafParams)
+		_, _, err := CheckTransaction(transactionId, []string{"simple"}, wafParams)
 		if err != nil {
 			b.Errorf("Error checking transaction: %v", err)
 		}
