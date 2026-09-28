@@ -1,16 +1,14 @@
-/* Error Init model plugin that raises an error in NewPlugin
+/* Nil Init model plugin whose NewPlugin returns a nil plugin without an error
  */
 
 package main
 
 import (
-	"errors"
-
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/metric"
 )
 
-// NewPlugin always fails
+// NewPlugin returns neither a plugin nor an error
 func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugin, error) {
-	return nil, errors.New("Some error")
+	return nil, nil
 }

@@ -1,4 +1,4 @@
-/* Trivial Test Decision Plugin that always returns no attack
+/* Trivial Test Decision Plugin that blocks only if the WAF says so
  */
 
 package main
@@ -9,18 +9,18 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// InitPlugin intitalizes the plugins (does nothing in this case)
-func InitPlugin(params map[string]string, meter metric.Meter) error {
-	logger := lg.Get()
-	logger.Printf(lg.WARN, "[test:InitPlugin] %v\n", params)
+type testDecision struct{}
 
-	return nil
+// NewPlugin intitalizes the plugin (does nothing in this case)
+func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
+	logger := lg.Get()
+	logger.Printf(lg.WARN, "[test:NewPlugin] %v\n", params)
+	return &testDecision{}, nil
 }
 
 // CheckResults returns true (block traffic) if WAF says so, and false
 // in other case.
-// func CheckResults(transactionID string, modelRes map[string]float64, modelWeight map[string]float64, modelThres map[string]float64, wafData map[string]string) (bool, error) {
-func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+func (d *testDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	logger := lg.Get()
 
 	modelRes := decisionInput.Results
@@ -28,7 +28,7 @@ func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, 
 	wafData := decisionInput.WAFdata
 	transactionID := decisionInput.TransactionId
 
-	logger.TPrintf(lg.WARN, transactionID, "[test:CheckResults]\n  modelRes: %v\n  modelWeight: %v\n  modelThres: %v\n  wafData: %v\n", modelRes, modelWeight, wafData)
+	logger.TPrintf(lg.WARN, transactionID, "[test:CheckResults]\n  modelRes: %v\n  modelWeight: %v\n  wafData: %v\n", modelRes, modelWeight, wafData)
 
 	if len(wafData.Scores) != 0 {
 		as := wafData.Scores["anomalyscore"]
@@ -40,7 +40,11 @@ func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, 
 	return waceapi.DecisionResult{Block: false}, nil
 }
 
-// ReloadPlugin reload the plugin
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+// Reload reloads the plugin (does nothing in this case)
+func (d *testDecision) Reload(params map[string]string, meter metric.Meter) error {
+	return nil
+}
+
+func (d *testDecision) Clean() error {
 	return nil
 }

@@ -1,5 +1,7 @@
 package waceapi
 
+import "go.opentelemetry.io/otel/metric"
+
 type HTTPHeader struct {
 	Key   string
 	Value string
@@ -21,7 +23,7 @@ type HTTPPayload struct {
 type ModelInput struct {
 	TransactionId string      `json:"transactionId"`
 	Payload       HTTPPayload `json:"payload"`
-	TrainingMode  bool        `json:"trainingMode"`
+	Training      bool        `json:"training"`
 }
 
 type ModelResults struct {
@@ -36,6 +38,7 @@ type DecisionInput struct {
 	ModelWeight   map[string]float64
 	WAFWeight     float64
 	WAFdata       WAFData
+	Training      bool
 }
 
 type DecisionResult struct {
@@ -46,4 +49,16 @@ type DecisionResult struct {
 type WAFData struct {
 	Scores map[string]float64
 	Rules  map[int]int
+}
+
+type ModelPlugin interface {
+	Process(ModelInput) (ModelResults, error)
+	Reload(params map[string]string, meter metric.Meter) error
+	Clean() error
+}
+
+type DecisionPlugin interface {
+	CheckResults(DecisionInput) (DecisionResult, error)
+	Reload(params map[string]string, meter metric.Meter) error
+	Clean() error
 }

@@ -23,6 +23,26 @@ const (
 	Error
 )
 
+// pluginKind defines type of plugin used
+type pluginKind int
+
+const (
+	modelKind pluginKind = iota
+	decisionKind
+)
+
+// String returns the string representation of the plugin kind
+func (t pluginKind) String() string {
+	switch t {
+	case modelKind:
+		return "Model"
+	case decisionKind:
+		return "Decision"
+	default:
+		return "Unknown"
+	}
+}
+
 // String returns the string representation of a status
 func (t CollectionStatus) String() string {
 	switch t {
@@ -120,7 +140,7 @@ func writeStatus(status TrainingStatus, filePath string) error {
 	return os.Rename(tmp, filePath)
 }
 
-func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, ctx context.Context, cancel context.CancelFunc, tc chan any, kind string) {
+func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, ctx context.Context, cancel context.CancelFunc, tc chan any, kind pluginKind) {
 	defer cancel()
 	logger := logging.Get()
 	logger.Printf(logging.INFO, "%s %s | Handling training data\n", kind, ID)
@@ -224,13 +244,20 @@ func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, c
 func (p *PluginManager) ProcessTraining(modelID, transactionID string, payload waceapi.HTTPPayload, t configstore.ModelPluginType) {
 	logger := logging.Get()
 
+	p.modelMutex.RLock()
 	mp, exists := p.modelPlugins[modelID]
+	p.modelMutex.RUnlock()
 	if !exists {
 		logger.TPrintf(logging.ERROR, transactionID, "Model %s not found", modelID)
 		return
 	}
 
-	res, err := p.modelProcess(modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload, TrainingMode: true}, t)
+	if mp.trainingCtx == nil {
+		logger.TPrintf(logging.DEBUG, transactionID, "training not started for model %s, dropping request", modelID)
+		return
+	}
+
+	res, err := p.modelProcess(modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload, Training: true}, t)
 	if err != nil {
 		logger.TPrintf(logging.ERROR, transactionID, "Error processing model %s: %s", modelID, err.Error())
 		return

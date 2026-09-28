@@ -1,6 +1,6 @@
 # ADR 0001 — Trainable decision plugins
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-06-25
 - **Repo context:** `ModSecIntl_wace_lib` (consumed by `wace-coraza`)
 
@@ -244,6 +244,9 @@ be trained on a feature set that is incomplete relative to production).
   the copy/successor in training) is registered as its own binary, because they
   use parameters loaded inside the plugin (`InitPlugin`/`ReloadPlugin`). The same
   `.so` is not reused by registering it twice.
+  *Superseded by [ADR 0002](0002-instance-based-plugin-api.md): plugins are now
+  instance-based, so several IDs can point to the same `.so` with independent
+  params.*
 
 ## Open questions
 

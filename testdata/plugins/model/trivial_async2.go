@@ -15,39 +15,33 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-var sleepTime float64
+type trivialAsync2Model struct {
+	sleepTime float64
+}
 
-// InitPlugin intitalizes the plugins (does nothing in this case)
-func InitPlugin(params map[string]string, meter metric.Meter) error {
+// NewPlugin intitalizes the plugin reading the optional "sleep_time" param
+func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugin, error) {
 	logger := lg.Get()
-	logger.Printf(lg.WARN, "[trivial_async2:InitPlugin] %v\n", params)
-	stringSleepTime, ok := params["sleep_time"]
-	if !ok {
-		sleepTime = 1.0
-	} else {
+	logger.Printf(lg.WARN, "[trivial_async2:NewPlugin] %v\n", params)
+	m := &trivialAsync2Model{sleepTime: 1.0}
+	if stringSleepTime, ok := params["sleep_time"]; ok {
 		var err error
-		sleepTime, err = strconv.ParseFloat(stringSleepTime, 64)
+		m.sleepTime, err = strconv.ParseFloat(stringSleepTime, 64)
 		if err != nil {
-			return fmt.Errorf("error parsing sleep_time parameter: %v", err)
+			return nil, fmt.Errorf("error parsing sleep_time parameter: %v", err)
 		}
 	}
 	ctx := context.Background()
 	pluginCounter, err := meter.Int64Counter("plugin_register")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pluginCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("plugin_name", "trivial_async2"), attribute.String("plugin_type", "model")))
-	return nil
+	return m, nil
 }
 
-func InitPluginAsync(params map[string]string, meter metric.Meter, natsManager func(func(waceapi.ModelInput) (waceapi.ModelResults, error))) error {
-	InitPlugin(params, meter)
-	natsManager(Process)
-	return nil
-}
-
-func Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
-	time.Sleep(time.Duration(sleepTime) * time.Second)
+func (m *trivialAsync2Model) Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
+	time.Sleep(time.Duration(m.sleepTime) * time.Second)
 	logger := lg.Get()
 	logger.TPrintf(lg.WARN, input.TransactionId, "[trivial_async2:Process] \"%v\"\n", input.Payload)
 	result := waceapi.ModelResults{
@@ -57,7 +51,11 @@ func Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
 	return result, nil
 }
 
-// ReloadPlugin reload the plugin
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+// Reload reloads the plugin (does nothing in this case)
+func (m *trivialAsync2Model) Reload(params map[string]string, meter metric.Meter) error {
+	return nil
+}
+
+func (m *trivialAsync2Model) Clean() error {
 	return nil
 }

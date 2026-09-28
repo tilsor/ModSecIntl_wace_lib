@@ -1,27 +1,29 @@
-/* Trivial Decision Plugin that always returns no attack
+/* Wrong Check Decision Plugin whose NewPlugin returns the concrete type instead of
+ * waceapi.DecisionPlugin, so the function type assertion in the plugin manager fails
  */
 
 package main
 
 import (
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
+	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/metric"
 )
 
-// InitPlugin intitalizes the plugins (does nothing in this case)
-func InitPlugin(params map[string]string) error {
-	logger := lg.Get()
-	logger.Printf(lg.WARN, "[simple:InitPlugin] %v\n", params)
+type wrongCheckDecision struct{}
+
+// NewPlugin has the wrong return type
+func NewPlugin(params map[string]string, meter metric.Meter) (*wrongCheckDecision, error) {
+	return &wrongCheckDecision{}, nil
+}
+
+func (d *wrongCheckDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+	return waceapi.DecisionResult{Block: false}, nil
+}
+
+func (d *wrongCheckDecision) Reload(params map[string]string, meter metric.Meter) error {
 	return nil
 }
 
-// CheckResults returns true (block traffic) if WAF says so, and false
-// in other case.
-func CheckResults() (bool, error) {
-	return false, nil
-}
-
-// ReloadPlugin reload the plugin
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+func (d *wrongCheckDecision) Clean() error {
 	return nil
 }

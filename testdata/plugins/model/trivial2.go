@@ -1,4 +1,4 @@
-/* Trivial Model Plugin that always returns 0 probability of attack
+/* Trivial Model Plugin that always returns 1 probability of attack
  */
 
 package main
@@ -12,29 +12,25 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// InitPlugin intitalizes the plugins (does nothing in this case)
-func InitPlugin(params map[string]string, meter metric.Meter) error {
+type trivial2Model struct{}
+
+// NewPlugin intitalizes the plugin (does nothing in this case)
+func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugin, error) {
 	logger := lg.Get()
-	logger.Printf(lg.WARN, "[trivial2:InitPlugin] %v\n", params)
+	logger.Printf(lg.WARN, "[trivial2:NewPlugin] %v\n", params)
 	// Create counter for plugin register
 	ctx := context.Background()
 	pluginCounter, err := meter.Int64Counter("plugin_register")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pluginCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("plugin_name", "trivial2"), attribute.String("plugin_type", "model")))
-	return nil
+	return &trivial2Model{}, nil
 }
 
-func InitPluginAsync(params map[string]string, meter metric.Meter, natsManager func(func(waceapi.ModelInput) (waceapi.ModelResults, error))) error {
-	InitPlugin(params, meter)
-	natsManager(Process)
-	return nil
-}
-
-func Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
+func (m *trivial2Model) Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
 	logger := lg.Get()
-	logger.TPrintf(lg.WARN, input.TransactionId, "[trivial2:Proccess] \"%v\"\n", input.Payload)
+	logger.TPrintf(lg.WARN, input.TransactionId, "[trivial2:Process] \"%v\"\n", input.Payload)
 	result := waceapi.ModelResults{
 		ProbAttack: 1.0,
 		Data:       make(map[string]interface{}),
@@ -42,9 +38,13 @@ func Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
 	return result, nil
 }
 
-// ReloadPlugin reload the plugin
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+// Reload reloads the plugin (does nothing in this case)
+func (m *trivial2Model) Reload(params map[string]string, meter metric.Meter) error {
 	logger := lg.Get()
-	logger.Printf(lg.WARN, "[trivial2:ReloadPlugin] %v\n", params)
+	logger.Printf(lg.WARN, "[trivial2:Reload] %v\n", params)
+	return nil
+}
+
+func (m *trivial2Model) Clean() error {
 	return nil
 }

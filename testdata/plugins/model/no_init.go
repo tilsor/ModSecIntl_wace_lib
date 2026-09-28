@@ -1,4 +1,4 @@
-/* No Init model plugin that has no InitPlugin function
+/* No Init model plugin that implements waceapi.ModelPlugin but exports no NewPlugin function
  */
 
 package main
@@ -8,16 +8,18 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// Process always returns 0 probability of attack
-func Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
-	result := waceapi.ModelResults{
-		ProbAttack: 0.0,
-		Data:       make(map[string]interface{}),
-	}
-	return result, nil
+type noInitModel struct{}
+
+var _ waceapi.ModelPlugin = (*noInitModel)(nil)
+
+func (m *noInitModel) Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
+	return waceapi.ModelResults{ProbAttack: 0.0}, nil
 }
 
-// ReloadPlugin reload the plugin
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+func (m *noInitModel) Reload(params map[string]string, meter metric.Meter) error {
+	return nil
+}
+
+func (m *noInitModel) Clean() error {
 	return nil
 }

@@ -12,27 +12,23 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// InitPlugin intitalizes the plugins (does nothing in this case)
-func InitPlugin(params map[string]string, meter metric.Meter) error {
+type trivialModel struct{}
+
+// NewPlugin intitalizes the plugin (does nothing in this case)
+func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugin, error) {
 	logger := lg.Get()
-	logger.Printf(lg.WARN, "[trivial:InitPlugin] %v\n", params)
+	logger.Printf(lg.WARN, "[trivial:NewPlugin] %v\n", params)
 	// Create counter for plugin register
 	ctx := context.Background()
 	pluginCounter, err := meter.Int64Counter("plugin_register")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pluginCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("plugin_name", "trivial"), attribute.String("plugin_type", "model")))
-	return nil
+	return &trivialModel{}, nil
 }
 
-func InitPluginAsync(params map[string]string, meter metric.Meter, natsManager func(func(waceapi.ModelInput) (waceapi.ModelResults, error))) error {
-	InitPlugin(params, meter)
-	natsManager(Process)
-	return nil
-}
-
-func Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
+func (m *trivialModel) Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
 	logger := lg.Get()
 	logger.TPrintf(lg.WARN, input.TransactionId, "[trivial:Process] \"%v\"\n", input.Payload)
 	result := waceapi.ModelResults{
@@ -42,9 +38,13 @@ func Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
 	return result, nil
 }
 
-// ReloadPlugin reload the plugin (does nothing in this case)
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+// Reload reloads the plugin (does nothing in this case)
+func (m *trivialModel) Reload(params map[string]string, meter metric.Meter) error {
 	logger := lg.Get()
-	logger.Printf(lg.WARN, "[trivial:ReloadPlugin] %v\n", params)
+	logger.Printf(lg.WARN, "[trivial:Reload] %v\n", params)
+	return nil
+}
+
+func (m *trivialModel) Clean() error {
 	return nil
 }

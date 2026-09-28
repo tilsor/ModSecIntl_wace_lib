@@ -1,4 +1,4 @@
-/* Trivial Decision Plugin that always returns no attack
+/* Error Check Decision Plugin that always returns an error from CheckResults
  */
 
 package main
@@ -6,24 +6,26 @@ package main
 import (
 	"errors"
 
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
+	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/metric"
 )
 
-// InitPlugin intitalizes the plugins (does nothing in this case)
-func InitPlugin(params map[string]string) error {
-	logger := lg.Get()
-	logger.Printf(lg.WARN, "[simple:InitPlugin] %v\n", params)
+type errorCheckDecision struct{}
+
+// NewPlugin intitalizes the plugin (does nothing in this case)
+func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
+	return &errorCheckDecision{}, nil
+}
+
+// CheckResults always returns an error
+func (d *errorCheckDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+	return waceapi.DecisionResult{}, errors.New("Some error")
+}
+
+func (d *errorCheckDecision) Reload(params map[string]string, meter metric.Meter) error {
 	return nil
 }
 
-// CheckResults returns true (block traffic) if WAF says so, and false
-// in other case.
-func CheckResults(transactionID string, modelRes map[string]float64, modelWeight map[string]float64, modelThres map[string]float64, wafData map[string]string) (bool, error) {
-	return false, errors.New("Some error")
-}
-
-// ReloadPlugin reload the plugin
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+func (d *errorCheckDecision) Clean() error {
 	return nil
 }
