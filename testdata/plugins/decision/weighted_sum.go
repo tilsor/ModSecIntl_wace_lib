@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 
 	lg "github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
@@ -13,31 +14,28 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-var threshold float64
+type weightedSumDecision struct {
+	mu        sync.RWMutex
+	threshold float64
+}
 
-func InitPlugin(params map[string]string, meter metric.Meter) error {
-	var err error
-	stringThreshold, ok := params["threshold"]
-	if !ok {
-		threshold = 0.5
-	} else {
-		threshold, err = strconv.ParseFloat(stringThreshold, 64)
-		if err != nil {
-			return fmt.Errorf("error parsing threshold parameter: %v", err)
-		}
+func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
+	d := &weightedSumDecision{}
+	if err := d.Reload(params, meter); err != nil {
+		return nil, err
 	}
 
 	// Create counter for plugin register
 	ctx := context.Background()
 	pluginCounter, err := meter.Int64Counter("plugin_register")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pluginCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("plugin_name", "weighted_sum"), attribute.String("plugin_type", "decision")))
-	return nil
+	return d, nil
 }
 
-func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+func (d *weightedSumDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	var weightedSum float64 = 0
 	var weightsSum float64 = 0
 	for key, value := range decisionInput.Results {
@@ -68,11 +66,30 @@ func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, 
 
 	weightedSum /= weightsSum
 
+	d.mu.RLock()
+	threshold := d.threshold
+	d.mu.RUnlock()
+
 	logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "weighted_sum | weighted sum: %v threshold: %v", weightedSum, threshold)
 	return waceapi.DecisionResult{Block: weightedSum > threshold}, nil
 }
 
-// ReloadPlugin reload the plugin
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+// Reload reads the optional "threshold" param (default 0.5)
+func (d *weightedSumDecision) Reload(params map[string]string, meter metric.Meter) error {
+	threshold := 0.5
+	if stringThreshold, ok := params["threshold"]; ok {
+		var err error
+		threshold, err = strconv.ParseFloat(stringThreshold, 64)
+		if err != nil {
+			return fmt.Errorf("error parsing threshold parameter: %v", err)
+		}
+	}
+	d.mu.Lock()
+	d.threshold = threshold
+	d.mu.Unlock()
+	return nil
+}
+
+func (d *weightedSumDecision) Clean() error {
 	return nil
 }

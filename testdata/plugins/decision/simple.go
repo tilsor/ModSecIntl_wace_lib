@@ -1,4 +1,4 @@
-/* Trivial Decision Plugin that always returns no attack
+/* Simple Decision Plugin that blocks when the WAF alerts and the models agree
  */
 
 package main
@@ -12,18 +12,20 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-func InitPlugin(params map[string]string, meter metric.Meter) error {
+type simpleDecision struct{}
+
+func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
 	// Create counter for plugin register
 	ctx := context.Background()
 	pluginCounter, err := meter.Int64Counter("plugin_register")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pluginCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("plugin_name", "simple"), attribute.String("plugin_type", "decision")))
-	return nil
+	return &simpleDecision{}, nil
 }
 
-func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+func (d *simpleDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	logger := lg.Get()
 	var totalModelW float64 = 0
 	var modelDetectionCount int = 0
@@ -56,41 +58,11 @@ func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, 
 	return waceapi.DecisionResult{Block: false}, nil
 }
 
-// func CheckResults(transactionID string, modelRes map[string]float64, modelWeight map[string]float64, modelThres map[string]float64, WAFdata map[string]string) (bool, error) {
-// 	logger := lg.Get()
-// 	var totalModelW float64 = 0
-// 	var modelDetectionCount int = 0
-// 	var totalModelProb float64 = 0
-// 	for key, value := range modelRes {
-// 		logger.TPrintf(lg.DEBUG, transactionID, "simple | model_id: %v result: %v threshold: %v", key, value, modelThres[key])
-// 		if value >= modelThres[key] {
-// 			modelDetectionCount++
-// 			totalModelW += modelWeight[key]
-// 		}
-// 	}
+// Reload reloads the plugin (does nothing in this case)
+func (d *simpleDecision) Reload(params map[string]string, meter metric.Meter) error {
+	return nil
+}
 
-// 	// DEBUG: print WAF data
-// 	for key, value := range WAFdata {
-// 		logger.TPrintf(lg.DEBUG, transactionID, "simple | WAF data: %v: %v", key, value)
-// 	}
-
-// 	// if we have some model results
-// 	if modelDetectionCount > 0 {
-// 		totalModelProb = totalModelW / float64(modelDetectionCount)
-// 	}
-// 	if len(WAFdata) != 0 {
-// 		as, _ := strconv.Atoi(WAFdata["inbound_blocking"])
-// 		it, _ := strconv.Atoi(WAFdata["inbound_threshold"])
-// 		logger.TPrintf(lg.DEBUG, transactionID, "Coraza | Anomaly score: %v Anomaly score threshold: %v ", as, it)
-
-// 		if as >= it && totalModelProb > 0.5 { // modsec wants to block
-// 			return true, nil
-// 		}
-// 	}
-// 	return false, nil
-// }
-
-// ReloadPlugin reload the plugin
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+func (d *simpleDecision) Clean() error {
 	return nil
 }

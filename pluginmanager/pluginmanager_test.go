@@ -1,8 +1,13 @@
 package pluginmanager
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,20 +74,14 @@ var errorInitPlugin = `  - id: "error_init"
     mode: sync
 `
 
-var noReqPlugin = `  - id: "no_req"
-    path: "../testdata/plugins/model/no_req.so"
-    plugin_type: "Everything"
-    mode: sync
-`
-
-var wrongReqPlugin = `  - id: "wrong_req"
-    path: "../testdata/plugins/model/wrong_req.so"
+var nilInitPlugin = `  - id: "nil_init"
+    path: "../testdata/plugins/model/nil_init.so"
     plugin_type: "Everything"
     mode: sync
 `
 
 // paramPlugin returns whatever float64 is stored in params["result"].
-// Its ReloadPlugin updates that value, so the output changes after a Reload.
+// Its Reload updates that value, so the output changes after a Reload.
 var paramPlugin = `  - id: "param"
     path: "../testdata/plugins/model/param.so"
     plugin_type: "Everything"
@@ -91,7 +90,7 @@ var paramPlugin = `  - id: "param"
       result: "0.3"
 `
 
-// Decision plugins that fail to load (wrong InitPlugin signature)
+// Decision plugins that fail to load (missing or wrong NewPlugin)
 var noCheckPlugin = `  - id: "no_check"
     path: "../testdata/plugins/decision/no_check.so"
     decisionbalance: 0.5
@@ -140,10 +139,6 @@ func setupPluginManager(t *testing.T, configuration []byte) *PluginManager {
 	}
 	if err := cs.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig failed: %v", err)
-	}
-	logger := logging.Get()
-	if err := logger.LoadLogger(cs.LogPath, cs.LogLevel); err != nil {
-		t.Fatalf("LoadLogger failed: %v", err)
 	}
 	pm, err := New(testMeter)
 	if err != nil {
@@ -327,7 +322,7 @@ func TestPluginManagerTransactionLifecycle(t *testing.T) {
 }
 
 // TestPluginManagerLoadModelFailures checks that New() succeeds even when model
-// plugins fail to load (due to missing/wrong Init or Process symbols), and that
+// plugins fail to load (due to a missing, wrong or failing NewPlugin), and that
 // those plugins are not available for processing.
 func TestPluginManagerLoadModelFailures(t *testing.T) {
 	tests := []struct {
@@ -335,11 +330,10 @@ func TestPluginManagerLoadModelFailures(t *testing.T) {
 		modelConf string
 		modelID   string
 	}{
-		{"no InitPlugin symbol", noInitPlugin, "no_init"},
-		{"wrong InitPlugin signature", wrongInitPlugin, "wrong_init"},
-		{"InitPlugin returns error", errorInitPlugin, "error_init"},
-		{"no Process symbol", noReqPlugin, "no_req"},
-		{"wrong Process signature", wrongReqPlugin, "wrong_req"},
+		{"no NewPlugin symbol", noInitPlugin, "no_init"},
+		{"wrong NewPlugin signature", wrongInitPlugin, "wrong_init"},
+		{"NewPlugin returns error", errorInitPlugin, "error_init"},
+		{"NewPlugin returns nil plugin", nilInitPlugin, "nil_init"},
 	}
 
 	for _, tt := range tests {
@@ -366,7 +360,7 @@ func TestPluginManagerLoadModelFailures(t *testing.T) {
 }
 
 // TestPluginManagerLoadDecisionFailures checks that New() succeeds even when
-// decision plugins fail to load (wrong InitPlugin signature), and that those
+// decision plugins fail to load (missing or wrong NewPlugin), and that those
 // plugins are not available for CheckResult.
 func TestPluginManagerLoadDecisionFailures(t *testing.T) {
 	tests := []struct {
@@ -374,8 +368,8 @@ func TestPluginManagerLoadDecisionFailures(t *testing.T) {
 		decConf    string
 		decisionID string
 	}{
-		{"no CheckResults symbol", noCheckPlugin, "no_check"},
-		{"wrong CheckResults signature", wrongCheckPlugin, "wrong_check"},
+		{"no NewPlugin symbol", noCheckPlugin, "no_check"},
+		{"wrong NewPlugin signature", wrongCheckPlugin, "wrong_check"},
 	}
 
 	for _, tt := range tests {
@@ -503,6 +497,108 @@ func TestPluginManagerReloadChangesOutput(t *testing.T) {
 	}
 
 	runProcess(0.8)
+}
+
+// applyConfig replaces the current configstore contents with the given YAML
+// config, without touching the plugin manager.
+func applyConfig(t *testing.T, configuration string) {
+	t.Helper()
+	cs, err := configstore.Get()
+	if err != nil {
+		t.Fatalf("configstore.Get: %v", err)
+	}
+	var aux configstore.ConfigFileData
+	if err := yaml.Unmarshal([]byte(configuration), &aux); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := cs.SetConfig(aux); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+}
+
+// processProb runs Process for modelID in a fresh transaction and returns the
+// reported probability of attack.
+func processProb(t *testing.T, pm *PluginManager, modelID string) (float64, error) {
+	t.Helper()
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+
+	ch := make(chan ModelStatus, 1)
+	go pm.Process(modelID, txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	status := <-ch
+	return status.ProbAttack, status.Err
+}
+
+// paramInstanceConf returns a param.so entry with the given id and result.
+func paramInstanceConf(id, result string) string {
+	return fmt.Sprintf(`  - id: %q
+    path: "../testdata/plugins/model/param.so"
+    plugin_type: "Everything"
+    mode: sync
+    params:
+      result: %q
+`, id, result)
+}
+
+// TestPluginManagerSamePluginMultipleInstances verifies that the same .so
+// loaded under two IDs yields two independent instances: each keeps its own
+// params, and reloading one does not affect the other.
+func TestPluginManagerSamePluginMultipleInstances(t *testing.T) {
+	config := baseConfig + "model_plugins:\n" + paramInstanceConf("param_a", "0.3") + paramInstanceConf("param_b", "0.8")
+	pm := setupPluginManager(t, []byte(config))
+
+	check := func(modelID string, wantProb float64) {
+		t.Helper()
+		prob, err := processProb(t, pm, modelID)
+		if err != nil {
+			t.Errorf("Process(%q): unexpected error: %v", modelID, err)
+			return
+		}
+		if prob != wantProb {
+			t.Errorf("Process(%q) ProbAttack = %f, want %f", modelID, prob, wantProb)
+		}
+	}
+
+	check("param_a", 0.3)
+	check("param_b", 0.8)
+
+	applyConfig(t, baseConfig+"model_plugins:\n"+paramInstanceConf("param_a", "0.5")+paramInstanceConf("param_b", "0.8"))
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	check("param_a", 0.5)
+	check("param_b", 0.8)
+}
+
+// TestPluginManagerReloadUnloadsRemovedPlugins verifies that plugins whose IDs
+// disappear from the config are removed on Reload, while the remaining ones
+// keep working.
+func TestPluginManagerReloadUnloadsRemovedPlugins(t *testing.T) {
+	config := baseConfig + "model_plugins:\n" + trivialPlugin + trivial2Plugin + "decision_plugins:\n" + simplePlugin + testPlugin
+	pm := setupPluginManager(t, []byte(config))
+
+	applyConfig(t, baseConfig+"model_plugins:\n"+trivialPlugin+"decision_plugins:\n"+simplePlugin)
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	if _, ok := pm.modelPlugins["trivial2"]; ok {
+		t.Error("trivial2 should have been unloaded after being removed from the config")
+	}
+	if _, ok := pm.decisionPlugins["test"]; ok {
+		t.Error("test decision plugin should have been unloaded after being removed from the config")
+	}
+	if _, err := processProb(t, pm, "trivial2"); err == nil {
+		t.Error("Process(\"trivial2\"): expected error after unload")
+	}
+	if _, err := processProb(t, pm, "trivial"); err != nil {
+		t.Errorf("Process(\"trivial\"): unexpected error after Reload: %v", err)
+	}
+	if _, ok := pm.decisionPlugins["simple"]; !ok {
+		t.Error("simple decision plugin should still be loaded")
+	}
 }
 
 // TestPluginManagerAddModelChannelAndClose exercises AddModelChannel (sync path)
@@ -973,5 +1069,326 @@ func TestPluginManagerDecisionTrainingReloadDisables(t *testing.T) {
 	case <-dp.trainingCtx.Done():
 	case <-time.After(time.Second):
 		t.Error("trainingCtx should be cancelled after Reload with training disabled")
+	}
+}
+
+// ── Plugin lifecycle ─────────────────────────────────────────────────────────
+
+// lifecycleModelConf returns a lifecycle.so model entry whose Clean creates
+// cleanFile (and fails afterwards when failClean is set).
+func lifecycleModelConf(id, cleanFile string, failClean bool) string {
+	return fmt.Sprintf(`  - id: %q
+    path: "../testdata/plugins/model/lifecycle.so"
+    plugin_type: "Everything"
+    mode: sync
+    params:
+      clean_file: %q
+      fail_clean: "%t"
+`, id, cleanFile, failClean)
+}
+
+// lifecycleDecisionConf returns a lifecycle.so decision entry whose Clean
+// creates cleanFile (and fails afterwards when failClean is set).
+func lifecycleDecisionConf(id, cleanFile string, failClean bool) string {
+	return fmt.Sprintf(`  - id: %q
+    path: "../testdata/plugins/decision/lifecycle.so"
+    params:
+      clean_file: %q
+      fail_clean: "%t"
+`, id, cleanFile, failClean)
+}
+
+// fileExists reports whether path exists.
+func fileExists(t *testing.T, path string) bool {
+	t.Helper()
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+	if !os.IsNotExist(err) {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return false
+}
+
+// readFirstSample decodes the first JSON line of a training results file.
+func readFirstSample(t *testing.T, path string) map[string]any {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	if !scanner.Scan() {
+		t.Fatalf("%s has no samples", path)
+	}
+	var sample map[string]any
+	if err := json.Unmarshal(scanner.Bytes(), &sample); err != nil {
+		t.Fatalf("unmarshal sample %q: %v", scanner.Text(), err)
+	}
+	return sample
+}
+
+// sampleTrainingFlag extracts data.training from a collected sample.
+func sampleTrainingFlag(t *testing.T, sample map[string]any) bool {
+	t.Helper()
+	data, ok := sample["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("sample has no data object: %v", sample)
+	}
+	training, ok := data["training"].(bool)
+	if !ok {
+		t.Fatalf("sample data has no training flag: %v", data)
+	}
+	return training
+}
+
+// TestPluginManagerReloadCleansOnlyRemovedPlugins verifies that Reload calls
+// Clean on the instances whose IDs were removed from the config, and not on the
+// ones that are kept (even when they come from the same .so).
+func TestPluginManagerReloadCleansOnlyRemovedPlugins(t *testing.T) {
+	dir := t.TempDir()
+	removedModel := filepath.Join(dir, "model_removed.clean")
+	keptModel := filepath.Join(dir, "model_kept.clean")
+	removedDecision := filepath.Join(dir, "decision_removed.clean")
+
+	config := baseConfig + "model_plugins:\n" +
+		lifecycleModelConf("model_removed", removedModel, false) +
+		lifecycleModelConf("model_kept", keptModel, false) +
+		"decision_plugins:\n" + lifecycleDecisionConf("decision_removed", removedDecision, false)
+	pm := setupPluginManager(t, []byte(config))
+
+	applyConfig(t, baseConfig+"model_plugins:\n"+lifecycleModelConf("model_kept", keptModel, false))
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	if !fileExists(t, removedModel) {
+		t.Error("Clean was not called on the removed model plugin")
+	}
+	if !fileExists(t, removedDecision) {
+		t.Error("Clean was not called on the removed decision plugin")
+	}
+	if fileExists(t, keptModel) {
+		t.Error("Clean must not be called on a model plugin that is still configured")
+	}
+	if _, ok := pm.modelPlugins["model_kept"]; !ok {
+		t.Error("model_kept should still be loaded")
+	}
+}
+
+// TestPluginManagerReloadUnloadsEvenIfCleanFails verifies that a plugin whose
+// Clean returns an error is still removed from the plugin manager.
+func TestPluginManagerReloadUnloadsEvenIfCleanFails(t *testing.T) {
+	dir := t.TempDir()
+	modelClean := filepath.Join(dir, "model.clean")
+	decisionClean := filepath.Join(dir, "decision.clean")
+
+	config := baseConfig + "model_plugins:\n" + trivialPlugin + lifecycleModelConf("failing_model", modelClean, true) +
+		"decision_plugins:\n" + lifecycleDecisionConf("failing_decision", decisionClean, true)
+	pm := setupPluginManager(t, []byte(config))
+
+	applyConfig(t, baseConfig+"model_plugins:\n"+trivialPlugin)
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	if !fileExists(t, modelClean) || !fileExists(t, decisionClean) {
+		t.Fatal("Clean should have been called on both removed plugins")
+	}
+	if _, ok := pm.modelPlugins["failing_model"]; ok {
+		t.Error("failing_model should have been unloaded despite its Clean error")
+	}
+	if _, ok := pm.decisionPlugins["failing_decision"]; ok {
+		t.Error("failing_decision should have been unloaded despite its Clean error")
+	}
+}
+
+// TestPluginManagerReloadUnloadCancelsTraining verifies that removing a plugin
+// in training from the config cancels its training collection.
+func TestPluginManagerReloadUnloadCancelsTraining(t *testing.T) {
+	config := baseConfig + "model_plugins:\n" + trivialTrainingPlugin + "decision_plugins:\n" +
+		decisionTrainingConf("simple_training", "/dev/null", "", 3)
+	pm := setupPluginManager(t, []byte(config))
+	mp := pm.modelPlugins["trivial"]
+	dp := pm.decisionPlugins["simple_training"]
+
+	applyConfig(t, baseConfig+"model_plugins:\n"+trivial2Plugin)
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	for name, ctx := range map[string]<-chan struct{}{"model": mp.trainingCtx.Done(), "decision": dp.trainingCtx.Done()} {
+		select {
+		case <-ctx:
+		case <-time.After(time.Second):
+			t.Errorf("%s training should be cancelled after its plugin is unloaded", name)
+		}
+	}
+}
+
+// TestPluginManagerReloadInvalidParamsKeepsState verifies that when a plugin
+// rejects new params on Reload, it keeps serving with its previous params.
+func TestPluginManagerReloadInvalidParamsKeepsState(t *testing.T) {
+	pm := setupPluginManager(t, []byte(baseConfig+"model_plugins:\n"+paramInstanceConf("param", "0.3")))
+
+	applyConfig(t, baseConfig+"model_plugins:\n"+paramInstanceConf("param", "not-a-number"))
+	if err := pm.Reload(testMeter); err != nil {
+		t.Fatalf("Reload should log plugin reload errors, not return them: %v", err)
+	}
+
+	prob, err := processProb(t, pm, "param")
+	if err != nil {
+		t.Fatalf("Process: unexpected error: %v", err)
+	}
+	if prob != 0.3 {
+		t.Errorf("ProbAttack = %f, want previous value 0.3", prob)
+	}
+}
+
+// TestPluginManagerModelTrainingFlag verifies that ModelInput.Training is true
+// for requests processed through ProcessTraining and false through Process.
+func TestPluginManagerModelTrainingFlag(t *testing.T) {
+	dir := t.TempDir()
+	resultPath := filepath.Join(dir, "model.ndjson")
+	conf := baseConfig + fmt.Sprintf(`model_plugins:
+  - id: "lifecycle_training"
+    path: "../testdata/plugins/model/lifecycle.so"
+    plugin_type: "Everything"
+    training: true
+    training_data:
+      max_samples: 1
+      result_file_path: %q
+      status_file_path: %q
+`, resultPath, filepath.Join(dir, "model.status")) + lifecycleModelConf("lifecycle", "", false)
+	pm := setupPluginManager(t, []byte(conf))
+	mp := pm.modelPlugins["lifecycle_training"]
+
+	pm.ProcessTraining("lifecycle_training", generateRandomID(), waceapi.HTTPPayload{URI: "/test"}, configstore.Everything)
+	select {
+	case <-mp.trainingCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("training collection did not complete")
+	}
+	if !sampleTrainingFlag(t, readFirstSample(t, resultPath)) {
+		t.Error("ProcessTraining should call the plugin with ModelInput.Training = true")
+	}
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+	ch := make(chan ModelStatus, 1)
+	pm.Process("lifecycle", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	if status := <-ch; status.Err != nil {
+		t.Fatalf("Process: unexpected error: %v", status.Err)
+	}
+	results, _ := pm.results.Load(txID)
+	res, ok := results.(*sync.Map).Load("lifecycle")
+	if !ok {
+		t.Fatal("Process did not store the result")
+	}
+	if res.(waceapi.ModelResults).Data.(map[string]bool)["training"] {
+		t.Error("Process should call the plugin with ModelInput.Training = false")
+	}
+}
+
+// TestPluginManagerDecisionTrainingFlag verifies that a decision plugin in
+// training receives DecisionInput.Training = true.
+func TestPluginManagerDecisionTrainingFlag(t *testing.T) {
+	dir := t.TempDir()
+	resultPath := filepath.Join(dir, "decision.ndjson")
+	conf := baseConfig + "model_plugins:\n" + trivialPlugin + fmt.Sprintf(`decision_plugins:
+  - id: "lifecycle_training"
+    path: "../testdata/plugins/decision/lifecycle.so"
+    training: true
+    training_data:
+      max_samples: 1
+      result_file_path: %q
+      status_file_path: %q
+`, resultPath, filepath.Join(dir, "decision.status"))
+	pm := setupPluginManager(t, []byte(conf))
+	dp := pm.decisionPlugins["lifecycle_training"]
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+	if _, _, err := pm.CheckResult(txID, []string{"lifecycle_training"}, waceapi.WAFData{}); err != nil {
+		t.Fatalf("CheckResult: %v", err)
+	}
+
+	select {
+	case <-dp.trainingCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("training collection did not complete")
+	}
+	if !sampleTrainingFlag(t, readFirstSample(t, resultPath)) {
+		t.Error("a training decision plugin should receive DecisionInput.Training = true")
+	}
+}
+
+// TestPluginManagerConcurrentReloadAndRequests runs Process and CheckResult
+// continuously while Reload loads and unloads plugins, so that `go test -race`
+// can detect unsynchronized access to the plugin maps.
+func TestPluginManagerConcurrentReloadAndRequests(t *testing.T) {
+	config := baseConfig + "model_plugins:\n" + trivialPlugin + paramPlugin + "decision_plugins:\n" + simplePlugin + testPlugin
+	pm := setupPluginManager(t, []byte(config))
+
+	// The configstore is not safe for concurrent SetConfig, so the new config
+	// is applied before the request goroutines start. The first Reload below
+	// then adds trivial2 and removes param and test while requests are running.
+	applyConfig(t, baseConfig+"model_plugins:\n"+trivialPlugin+trivial2Plugin+"decision_plugins:\n"+simplePlugin)
+
+	const workers = 4
+	stop := make(chan struct{})
+	var ready, done sync.WaitGroup
+	ready.Add(workers)
+	for i := 0; i < workers; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			first := true
+			for {
+				txID := generateRandomID()
+				pm.InitTransaction(txID)
+				ch := make(chan ModelStatus, 1)
+				pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+				if status := <-ch; status.Err != nil {
+					t.Errorf("Process during Reload: %v", status.Err)
+				}
+				if _, _, err := pm.CheckResult(txID, []string{"simple"}, waceapi.WAFData{}); err != nil {
+					t.Errorf("CheckResult during Reload: %v", err)
+				}
+				pm.CloseTransaction(txID)
+				if first {
+					ready.Done()
+					first = false
+				}
+				select {
+				case <-stop:
+					return
+				default:
+				}
+			}
+		}()
+	}
+
+	ready.Wait()
+	for i := 0; i < 20; i++ {
+		if err := pm.Reload(testMeter); err != nil {
+			t.Errorf("Reload: %v", err)
+		}
+	}
+	close(stop)
+	done.Wait()
+
+	if _, ok := pm.modelPlugins["trivial2"]; !ok {
+		t.Error("trivial2 should have been loaded by Reload")
+	}
+	if _, ok := pm.modelPlugins["param"]; ok {
+		t.Error("param should have been unloaded by Reload")
+	}
+	if _, ok := pm.decisionPlugins["test"]; ok {
+		t.Error("test should have been unloaded by Reload")
 	}
 }

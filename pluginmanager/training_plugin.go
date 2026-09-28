@@ -224,13 +224,15 @@ func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, c
 func (p *PluginManager) ProcessTraining(modelID, transactionID string, payload waceapi.HTTPPayload, t configstore.ModelPluginType) {
 	logger := logging.Get()
 
+	p.modelMutex.RLock()
 	mp, exists := p.modelPlugins[modelID]
+	p.modelMutex.RUnlock()
 	if !exists {
 		logger.TPrintf(logging.ERROR, transactionID, "Model %s not found", modelID)
 		return
 	}
 
-	res, err := p.modelProcess(modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload, TrainingMode: true}, t)
+	res, err := p.modelProcess(modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload, Training: true}, t)
 	if err != nil {
 		logger.TPrintf(logging.ERROR, transactionID, "Error processing model %s: %s", modelID, err.Error())
 		return

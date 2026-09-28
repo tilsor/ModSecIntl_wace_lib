@@ -1,4 +1,4 @@
-// Decision Plugin that uses weighted sum algorithm to decide if a transaction should be blocked
+// Decision Plugin that blocks based only on the WAF anomaly score
 
 package main
 
@@ -14,20 +14,20 @@ import (
 
 const PLUGIN_NAME = "waf_only"
 
-var threshold float64
+type wafOnlyDecision struct{}
 
-func InitPlugin(params map[string]string, meter metric.Meter) error {
+func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
 	// Create counter for plugin register
 	ctx := context.Background()
 	pluginCounter, err := meter.Int64Counter("plugin_register")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pluginCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("plugin_name", PLUGIN_NAME), attribute.String("plugin_type", "decision")))
-	return nil
+	return &wafOnlyDecision{}, nil
 }
 
-func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+func (d *wafOnlyDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	as, ok := decisionInput.WAFdata.Scores["inbound_blocking"]
 	if !ok {
 		return waceapi.DecisionResult{}, fmt.Errorf("inbound_blocking score not found")
@@ -39,10 +39,18 @@ func CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, 
 
 	logger := lg.Get()
 	logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "%s | anomaly score: %v anomaly score threshold: %v", PLUGIN_NAME, as, it)
-	return waceapi.DecisionResult{Block: as >= it}, nil
+	if decisionInput.Training {
+		return waceapi.DecisionResult{Block: as >= it, Data: decisionInput}, nil
+	} else {
+		return waceapi.DecisionResult{Block: as >= it}, nil
+	}
 }
 
-// ReloadPlugin reload the plugin
-func ReloadPlugin(params map[string]string, meter metric.Meter) error {
+// Reload reloads the plugin (does nothing in this case)
+func (d *wafOnlyDecision) Reload(params map[string]string, meter metric.Meter) error {
+	return nil
+}
+
+func (d *wafOnlyDecision) Clean() error {
 	return nil
 }
