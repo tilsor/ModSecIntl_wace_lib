@@ -115,6 +115,13 @@ func (pm *PluginManager) Reload(meter metric.Meter) error {
 	return pm.loadDecisionPlugins(meter)
 }
 
+func (pm *PluginManager) startTraining(id string, td configstore.TrainingData, kind pluginKind) (chan any, context.Context, context.CancelFunc) {
+	ch := make(chan any)
+	ctx, cancel := context.WithCancel(context.Background())
+	go pm.handleTraining(id, td, ctx, cancel, ch, kind)
+	return ch, ctx, cancel
+}
+
 // loadModelPlugins load new Plugins and reload their configuration if they previously existed
 func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 	conf, err := configstore.Get()
@@ -170,9 +177,7 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 			var trainingCtx context.Context
 			var trainingCancel context.CancelFunc
 			if conf.IsInTraining(data.ID) {
-				trainingChannel = make(chan any)
-				trainingCtx, trainingCancel = context.WithCancel(context.Background())
-				go pm.handleTraining(data.ID, data.TrainingData, trainingCtx, trainingCancel, trainingChannel, "Model")
+				trainingChannel, trainingCtx, trainingCancel = pm.startTraining(data.ID, data.TrainingData, modelKind)
 			}
 			pm.modelMutex.Lock()
 			pm.modelPlugins[data.ID] = modelPluginData{
@@ -190,9 +195,17 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 				logger.Printf(logging.WARN, "| %s | cannot reload plugin: %v", data.ID, err)
 				continue
 			}
-			if !conf.IsInTraining(data.ID) && mpData.trainingCancel != nil {
+			if !conf.IsInTraining(data.ID) && mpData.trainingChannel != nil {
 				mpData.trainingCancel()
+				mpData.trainingChannel, mpData.trainingCtx, mpData.trainingCancel = nil, nil, nil
+			} else if conf.IsInTraining(data.ID) && mpData.trainingChannel == nil {
+				mpData.trainingChannel, mpData.trainingCtx, mpData.trainingCancel = pm.startTraining(data.ID, data.TrainingData, modelKind)
+			} else {
+				continue
 			}
+			pm.modelMutex.Lock()
+			pm.modelPlugins[data.ID] = mpData
+			pm.modelMutex.Unlock()
 		}
 	}
 
@@ -224,7 +237,7 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 
 	// Load decision plugins
 	for _, data := range conf.DecisionPlugins {
-		dp, found := pm.decisionPlugins[data.ID]
+		dpData, found := pm.decisionPlugins[data.ID]
 		if !found {
 			p, err := plugin.Open(data.Path)
 			if err != nil {
@@ -257,9 +270,7 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 			var trainingCtx context.Context
 			var trainingCancel context.CancelFunc
 			if conf.IsDecisionInTraining(data.ID) {
-				trainingChannel = make(chan any)
-				trainingCtx, trainingCancel = context.WithCancel(context.Background())
-				go pm.handleTraining(data.ID, data.TrainingData, trainingCtx, trainingCancel, trainingChannel, "Decision")
+				trainingChannel, trainingCtx, trainingCancel = pm.startTraining(data.ID, data.TrainingData, decisionKind)
 			}
 			pm.decisionMutex.Lock()
 			pm.decisionPlugins[data.ID] = decisionPluginData{
@@ -271,14 +282,22 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 			pm.decisionMutex.Unlock()
 			logger.Printf(logging.INFO, "| %s | plugin loaded", data.ID)
 		} else {
-			err = dp.decisionPlugin.Reload(data.Params, meter)
+			err = dpData.decisionPlugin.Reload(data.Params, meter)
 			if err != nil {
 				logger.Printf(logging.WARN, "| %s | cannot reload plugin: %v", data.ID, err)
 				continue
 			}
-			if !conf.IsDecisionInTraining(data.ID) && dp.trainingCancel != nil {
-				dp.trainingCancel()
+			if !conf.IsDecisionInTraining(data.ID) && dpData.trainingChannel != nil {
+				dpData.trainingCancel()
+				dpData.trainingChannel, dpData.trainingCtx, dpData.trainingCancel = nil, nil, nil
+			} else if conf.IsDecisionInTraining(data.ID) && dpData.trainingChannel == nil {
+				dpData.trainingChannel, dpData.trainingCtx, dpData.trainingCancel = pm.startTraining(data.ID, data.TrainingData, decisionKind)
+			} else {
+				continue
 			}
+			pm.decisionMutex.Lock()
+			pm.decisionPlugins[data.ID] = dpData
+			pm.decisionMutex.Unlock()
 		}
 	}
 
@@ -480,6 +499,9 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 		if dpConf.Training {
 			// Shadow plugin: collect a training sample off the request path,
 			// without affecting the blocking decision.
+			if dp.trainingCtx == nil {
+				continue
+			}
 			go func() {
 				res, err := dp.decisionPlugin.CheckResults(input)
 				if err != nil {

@@ -74,7 +74,7 @@ func TestHandleTrainingModelWritesData(t *testing.T) {
 	td := configstore.TrainingData{MaxSamples: 3, ResultFilePath: path}
 	ctx, cancel := context.WithCancel(context.Background())
 	tc := make(chan any)
-	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, "Model")
+	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, modelKind)
 
 	for i := 0; i < 3; i++ {
 		tc <- waceapi.ModelResults{ProbAttack: float64(i) * 0.5}
@@ -116,7 +116,7 @@ func TestHandleTrainingModelAlreadyFull(t *testing.T) {
 	td := configstore.TrainingData{MaxSamples: 5, ResultFilePath: path}
 	ctx, cancel := context.WithCancel(context.Background())
 	tc := make(chan any)
-	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, "Model")
+	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, modelKind)
 
 	select {
 	case <-ctx.Done():
@@ -138,7 +138,7 @@ func TestHandleTrainingModelResumesFromExisting(t *testing.T) {
 	td := configstore.TrainingData{MaxSamples: 5, ResultFilePath: path}
 	ctx, cancel := context.WithCancel(context.Background())
 	tc := make(chan any)
-	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, "Model")
+	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, modelKind)
 
 	for i := 0; i < 3; i++ {
 		tc <- waceapi.ModelResults{ProbAttack: float64(i)}
@@ -163,7 +163,7 @@ func TestHandleTrainingModelCancellation(t *testing.T) {
 	tc := make(chan any)
 	done := make(chan struct{})
 	go func() {
-		(&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, "Model")
+		(&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, modelKind)
 		close(done)
 	}()
 
@@ -189,7 +189,7 @@ func TestHandleTrainingModelFileOpenError(t *testing.T) {
 	tc := make(chan any)
 	done := make(chan struct{})
 	go func() {
-		(&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, "Model")
+		(&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, modelKind)
 		close(done)
 	}()
 
@@ -451,7 +451,7 @@ func TestHandleTrainingModelStatus(t *testing.T) {
 			td := tc.setup(t, dir)
 			ctx, cancel := context.WithCancel(context.Background())
 			ch := make(chan any)
-			go (&PluginManager{}).handleTraining("test", td, ctx, cancel, ch, "Model")
+			go (&PluginManager{}).handleTraining("test", td, ctx, cancel, ch, modelKind)
 
 			for i := 0; i < tc.samples; i++ {
 				ch <- waceapi.ModelResults{ProbAttack: float64(i) * 0.1}
@@ -525,7 +525,7 @@ func TestHandleTrainingModelRestartSkipsTerminal(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				(&PluginManager{}).handleTraining("test", td, ctx, cancel, make(chan any), "Model")
+				(&PluginManager{}).handleTraining("test", td, ctx, cancel, make(chan any), modelKind)
 			}()
 
 			select {
@@ -562,7 +562,7 @@ func TestHandleTrainingModelRestartPreservesCreatedAt(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	tc := make(chan any)
-	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, "Model")
+	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, modelKind)
 
 	for i := 0; i < 3; i++ {
 		tc <- waceapi.ModelResults{}
@@ -598,7 +598,7 @@ func TestHandleTrainingModelRestartResumesWhenCollecting(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	tc := make(chan any)
-	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, "Model")
+	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, modelKind)
 
 	for i := 0; i < 3; i++ {
 		tc <- waceapi.ModelResults{}
@@ -639,7 +639,7 @@ func TestHandleTrainingModelRestartResumesWhenReady(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	tc := make(chan any)
-	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, "Model")
+	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, modelKind)
 
 	for i := 0; i < 2; i++ {
 		tc <- waceapi.ModelResults{}
@@ -673,7 +673,7 @@ func TestHandleTrainingModelCorruptedStatusFileProceedsFresh(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	tc := make(chan any)
-	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, "Model")
+	go (&PluginManager{}).handleTraining("test", td, ctx, cancel, tc, modelKind)
 
 	for i := 0; i < 2; i++ {
 		tc <- waceapi.ModelResults{}

@@ -2,6 +2,7 @@ package pluginmanager
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -1391,4 +1392,138 @@ func TestPluginManagerConcurrentReloadAndRequests(t *testing.T) {
 	if _, ok := pm.decisionPlugins["test"]; ok {
 		t.Error("test should have been unloaded by Reload")
 	}
+}
+
+// ── Training transitions on Reload ───────────────────────────────────────────
+
+// simpleNoTrainingConf is the production (training: false) counterpart of
+// decisionTrainingConf("simple_training", ...).
+var simpleNoTrainingConf = `  - id: "simple_training"
+    path: "../testdata/plugins/decision/simple.so"
+`
+
+// TestPluginManagerReloadTrainingTransitions verifies that Reload starts,
+// keeps, stops and restarts training collection as the training flag of an
+// already loaded plugin changes, for both model and decision plugins.
+func TestPluginManagerReloadTrainingTransitions(t *testing.T) {
+	tests := []struct {
+		name       string
+		disabled   string
+		enabled    string
+		trainingOf func(pm *PluginManager) context.Context
+	}{
+		{
+			name:     "model",
+			disabled: baseConfig + "model_plugins:\n" + trivialPlugin,
+			enabled:  baseConfig + "model_plugins:\n" + trivialTrainingPlugin,
+			trainingOf: func(pm *PluginManager) context.Context {
+				return pm.modelPlugins["trivial"].trainingCtx
+			},
+		},
+		{
+			name:     "decision",
+			disabled: baseConfig + "model_plugins:\n" + trivialPlugin + "decision_plugins:\n" + simpleNoTrainingConf,
+			enabled:  baseConfig + "model_plugins:\n" + trivialPlugin + "decision_plugins:\n" + decisionTrainingConf("simple_training", "/dev/null", "", 3),
+			trainingOf: func(pm *PluginManager) context.Context {
+				return pm.decisionPlugins["simple_training"].trainingCtx
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pm := setupPluginManager(t, []byte(tt.disabled))
+			if ctx := tt.trainingOf(pm); ctx != nil {
+				t.Fatal("training should not be running for a plugin loaded with training: false")
+			}
+
+			reload := func(config string) {
+				t.Helper()
+				applyConfig(t, config)
+				if err := pm.Reload(testMeter); err != nil {
+					t.Fatalf("Reload: %v", err)
+				}
+			}
+
+			// false → true starts the collection.
+			reload(tt.enabled)
+			first := tt.trainingOf(pm)
+			if first == nil || first.Err() != nil {
+				t.Fatal("Reload should start training when it is enabled")
+			}
+
+			// A reload that does not change the flag keeps the same collection.
+			reload(tt.enabled)
+			if ctx := tt.trainingOf(pm); ctx != first {
+				t.Error("Reload without a training change should keep the running collection")
+			}
+
+			// true → false stops the collection and clears it.
+			reload(tt.disabled)
+			if ctx := tt.trainingOf(pm); ctx != nil {
+				t.Error("Reload should clear the training state when training is disabled")
+			}
+			select {
+			case <-first.Done():
+			case <-time.After(time.Second):
+				t.Error("Reload should cancel the running collection when training is disabled")
+			}
+
+			// false → true again starts a new collection.
+			reload(tt.enabled)
+			second := tt.trainingOf(pm)
+			if second == nil || second.Err() != nil {
+				t.Fatal("Reload should restart training when it is enabled again")
+			}
+			if second == first {
+				t.Error("re-enabling training should start a new collection, not reuse the cancelled one")
+			}
+		})
+	}
+}
+
+// TestPluginManagerProcessTrainingBeforeTrainingStarts covers the window in
+// which the configstore already marks a model as training but Reload has not
+// started its collection yet: ProcessTraining must drop the request instead
+// of panicking on the missing training context.
+func TestPluginManagerProcessTrainingBeforeTrainingStarts(t *testing.T) {
+	pm := setupPluginManager(t, []byte(baseConfig+"model_plugins:\n"+trivialPlugin))
+	applyConfig(t, baseConfig+"model_plugins:\n"+trivialTrainingPlugin) // no Reload
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pm.ProcessTraining("trivial", generateRandomID(), waceapi.HTTPPayload{URI: "/test"}, configstore.Everything)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("ProcessTraining should return immediately when training has not started")
+	}
+}
+
+// TestPluginManagerCheckResultBeforeTrainingStarts covers the same window for
+// decision plugins: CheckResult must skip a plugin that the config marks as
+// training but whose collection has not started, without panicking.
+func TestPluginManagerCheckResultBeforeTrainingStarts(t *testing.T) {
+	conf := baseConfig + "model_plugins:\n" + trivialPlugin + "decision_plugins:\n"
+	pm := setupPluginManager(t, []byte(conf+simpleNoTrainingConf))
+	applyConfig(t, conf+decisionTrainingConf("simple_training", "/dev/null", "", 3)) // no Reload
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+
+	block, enabled, err := pm.CheckResult(txID, []string{"simple_training"}, waceapi.WAFData{})
+	if err != nil {
+		t.Fatalf("CheckResult: %v", err)
+	}
+	if block || enabled {
+		t.Errorf("CheckResult = (block %t, enabled %t), want (false, false) for a training-only call", block, enabled)
+	}
+
+	// Without the guard, the panic would happen in the shadow goroutine that
+	// CheckResult starts and does not wait for. Give it time to run so that the
+	// panic, which aborts the test binary, surfaces in this test.
+	time.Sleep(200 * time.Millisecond)
 }
