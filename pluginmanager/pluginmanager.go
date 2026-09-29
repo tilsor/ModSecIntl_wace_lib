@@ -8,15 +8,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"plugin"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/nats-io/nats.go"
-	"github.com/tilsor/ModSecIntl_logging/logging"
 )
 
 // ModelTransmitionResults is the struct that contains the results of the model plugin
@@ -64,6 +65,10 @@ type PluginManager struct {
 	syncModelsChannels  sync.Map
 	asyncModelsChannels sync.Map
 	natConn             *nats.Conn
+	// logger carries component=pluginmanager
+	logger atomic.Pointer[slog.Logger]
+	// baseLogger is the host logger without a component attribute
+	baseLogger atomic.Pointer[slog.Logger]
 }
 
 const (
@@ -74,21 +79,22 @@ const (
 	decisionInitFunctionName = "NewPlugin"
 )
 
-// New creates a new PluginManager instance.
-func New(meter metric.Meter) (*PluginManager, error) {
+// New creates a new PluginManager instance. The given logger must not
+// already carry a component attribute. If it is nil, slog.Default() is used.
+func New(meter metric.Meter, logger *slog.Logger) (*PluginManager, error) {
 	pm := new(PluginManager)
+	pm.setLogger(logger)
 	conf, err := configstore.Get()
 	if err != nil {
 		return nil, err
 	}
-	logger := logging.Get()
-	logger.Printf(logging.DEBUG, "Connecting to NATS server at %s", conf.NatsURL)
 
 	if conf.NatsURL != "" {
+		pm.getLogger().Debug("connecting to NATS server", "nats.url", conf.NatsURL)
 		nc, err := nats.Connect(conf.NatsURL)
 
 		if err != nil {
-			logger.Printf(logging.ERROR, "Failed to connect to NATS server")
+			pm.getLogger().Error("failed to connect to NATS server", "nats.url", conf.NatsURL, "error", err)
 			return nil, err
 		}
 
@@ -104,15 +110,51 @@ func New(meter metric.Meter) (*PluginManager, error) {
 	return pm, nil
 }
 
+// setLogger replaces the logger of the plugin manager. The given logger
+// must not already carry a component attribute. If it is nil,
+// slog.Default() is used.
+func (pm *PluginManager) setLogger(logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	pm.baseLogger.Store(logger)
+	pm.logger.Store(logger.With(waceapi.LogKeyComponent, "pluginmanager"))
+}
+
+// getLogger returns the current logger of the plugin manager.
+func (pm *PluginManager) getLogger() *slog.Logger {
+	return pm.logger.Load()
+}
+
+// pluginLogger returns the current plugin manager logger with the
+// attributes of the given plugin. Long-lived goroutines call it on
+// every record so that they see the logger set by Reload.
+func (pm *PluginManager) pluginLogger(id string, kind pluginKind) *slog.Logger {
+	return pm.getLogger().With(waceapi.LogKeyPluginType, kind.logValue(), waceapi.LogKeyPlugin, id)
+}
+
 // Reload reloads the configuration for all already-loaded plugins and loads any
 // newly added plugins from the current configstore state.
-func (pm *PluginManager) Reload(meter metric.Meter) error {
+func (pm *PluginManager) Reload(meter metric.Meter, l *slog.Logger) error {
 	pm.reloadMutex.Lock()
 	defer pm.reloadMutex.Unlock()
+	pm.setLogger(l)
 	if err := pm.loadModelPlugins(meter); err != nil {
 		return err
 	}
 	return pm.loadDecisionPlugins(meter)
+}
+
+// pluginConfig builds the configuration passed to NewPlugin and Reload
+// of the plugin with the given id.
+func (pm *PluginManager) pluginConfig(id string, kind pluginKind, params map[string]string, meter metric.Meter) waceapi.PluginConfig {
+	return waceapi.PluginConfig{
+		Params: params,
+		Meter:  meter,
+		Logger: pm.baseLogger.Load().With(waceapi.LogKeyComponent, "plugin",
+			waceapi.LogKeyPluginType, kind.logValue(),
+			waceapi.LogKeyPlugin, id),
+	}
 }
 
 func (pm *PluginManager) startTraining(id string, td configstore.TrainingData, kind pluginKind) (chan any, context.Context, context.CancelFunc) {
@@ -128,46 +170,45 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 	if err != nil {
 		return err
 	}
-	logger := logging.Get()
-
 	// Load plugin models
 	// TODO: change plugin on path updates
 	for _, data := range conf.ModelPlugins {
+		logger := pm.pluginLogger(data.ID, modelKind)
 		mpData, found := pm.modelPlugins[data.ID]
 		if !found {
 			p, err := plugin.Open(data.Path)
 			if err != nil {
-				logger.Printf(logging.ERROR, "| %s | cannot open plugin: %v", data.ID, err)
+				logger.Error("cannot open plugin", "plugin.path", data.Path, "error", err)
 				continue
 			}
 			f, err := p.Lookup(modelInitFunctionName)
 			if err != nil {
-				logger.Printf(logging.ERROR, "| %s | cannot load plugin: %s function not found: %v", data.ID, modelInitFunctionName, err)
+				logger.Error("cannot load plugin: init function not found", "function", modelInitFunctionName, "error", err)
 				continue
 			}
 
-			newPluginFunc, ok := f.(func(map[string]string, metric.Meter) (waceapi.ModelPlugin, error))
+			newPluginFunc, ok := f.(func(waceapi.PluginConfig) (waceapi.ModelPlugin, error))
 			if !ok {
-				logger.Printf(logging.ERROR, "| %s | cannot load plugin: invalid %s function type", data.ID, modelInitFunctionName)
+				logger.Error("cannot load plugin: invalid init function type", "function", modelInitFunctionName)
 				continue
 			}
 
 			// plugin initialization
-			mp, err := newPluginFunc(data.Params, meter)
+			mp, err := newPluginFunc(pm.pluginConfig(data.ID, modelKind, data.Params, meter))
 			if err != nil {
-				logger.Printf(logging.ERROR, "| %s | cannot initialize plugin: %v", data.ID, err)
+				logger.Error("cannot initialize plugin", "error", err)
 				continue
 			}
 			if mp == nil {
-				logger.Printf(logging.ERROR, "| %s | cannot initialize plugin: %s returned a nil plugin", data.ID, modelInitFunctionName)
+				logger.Error("cannot initialize plugin: init function returned a nil plugin", "function", modelInitFunctionName)
 				continue
 			}
 			if conf.IsAsync(data.ID) || conf.IsRemote(data.ID) {
-				err := ModelProcessHandler(data.ID, mp.Process)
+				err := pm.ModelProcessHandler(data.ID, mp.Process)
 				if err != nil {
-					logger.Printf(logging.ERROR, "| %s | cannot start process handler: %v", data.ID, err)
+					logger.Error("cannot start process handler", "error", err)
 					if err := mp.Clean(); err != nil {
-						logger.Printf(logging.WARN, "| %s | cannot clean plugin: %v", data.ID, err)
+						logger.Warn("cannot clean plugin", "error", err)
 					}
 					continue
 				}
@@ -188,11 +229,11 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 				trainingCancel:  trainingCancel,
 			}
 			pm.modelMutex.Unlock()
-			logger.Printf(logging.INFO, "| %s | plugin loaded", data.ID)
+			logger.Info("plugin loaded")
 		} else {
-			err = mpData.modelPlugin.Reload(data.Params, meter)
+			err = mpData.modelPlugin.Reload(pm.pluginConfig(data.ID, modelKind, data.Params, meter))
 			if err != nil {
-				logger.Printf(logging.WARN, "| %s | cannot reload plugin: %v", data.ID, err)
+				logger.Warn("cannot reload plugin", "error", err)
 				continue
 			}
 			if !conf.IsInTraining(data.ID) && mpData.trainingChannel != nil {
@@ -219,10 +260,11 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 		if mp.trainingCancel != nil {
 			mp.trainingCancel()
 		}
+		logger := pm.pluginLogger(id, modelKind)
 		if err := mp.modelPlugin.Clean(); err != nil {
-			logger.Printf(logging.WARN, "| %s | cannot clean plugin: %v", id, err)
+			logger.Warn("cannot clean plugin", "error", err)
 		}
-		logger.Printf(logging.INFO, "| %s | plugin unloaded", id)
+		logger.Info("plugin unloaded")
 	}
 	return nil
 }
@@ -233,36 +275,35 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 	if err != nil {
 		return err
 	}
-	logger := logging.Get()
-
 	// Load decision plugins
 	for _, data := range conf.DecisionPlugins {
+		logger := pm.pluginLogger(data.ID, decisionKind)
 		dpData, found := pm.decisionPlugins[data.ID]
 		if !found {
 			p, err := plugin.Open(data.Path)
 			if err != nil {
-				logger.Printf(logging.ERROR, "| %s | cannot open plugin: %v", data.ID, err)
+				logger.Error("cannot open plugin", "plugin.path", data.Path, "error", err)
 				continue
 			}
 			f, err := p.Lookup(decisionInitFunctionName)
 			if err != nil {
-				logger.Printf(logging.ERROR, "| %s | cannot load plugin: %s function not found: %v", data.ID, decisionInitFunctionName, err)
+				logger.Error("cannot load plugin: init function not found", "function", decisionInitFunctionName, "error", err)
 				continue
 			}
-			newPluginFunc, ok := f.(func(map[string]string, metric.Meter) (waceapi.DecisionPlugin, error))
+			newPluginFunc, ok := f.(func(waceapi.PluginConfig) (waceapi.DecisionPlugin, error))
 			if !ok {
-				logger.Printf(logging.ERROR, "| %s | cannot load plugin: invalid %s function type", data.ID, decisionInitFunctionName)
+				logger.Error("cannot load plugin: invalid init function type", "function", decisionInitFunctionName)
 				continue
 			}
 
 			// plugin initialization
-			dp, err := newPluginFunc(data.Params, meter)
+			dp, err := newPluginFunc(pm.pluginConfig(data.ID, decisionKind, data.Params, meter))
 			if err != nil {
-				logger.Printf(logging.ERROR, "| %s | cannot initialize plugin: %v", data.ID, err)
+				logger.Error("cannot initialize plugin", "error", err)
 				continue
 			}
 			if dp == nil {
-				logger.Printf(logging.ERROR, "| %s | cannot initialize plugin: %s returned a nil plugin", data.ID, decisionInitFunctionName)
+				logger.Error("cannot initialize plugin: init function returned a nil plugin", "function", decisionInitFunctionName)
 				continue
 			}
 
@@ -280,11 +321,11 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 				trainingCancel:  trainingCancel,
 			}
 			pm.decisionMutex.Unlock()
-			logger.Printf(logging.INFO, "| %s | plugin loaded", data.ID)
+			logger.Info("plugin loaded")
 		} else {
-			err = dpData.decisionPlugin.Reload(data.Params, meter)
+			err = dpData.decisionPlugin.Reload(pm.pluginConfig(data.ID, decisionKind, data.Params, meter))
 			if err != nil {
-				logger.Printf(logging.WARN, "| %s | cannot reload plugin: %v", data.ID, err)
+				logger.Warn("cannot reload plugin", "error", err)
 				continue
 			}
 			if !conf.IsDecisionInTraining(data.ID) && dpData.trainingChannel != nil {
@@ -311,10 +352,11 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 		if dp.trainingCancel != nil {
 			dp.trainingCancel()
 		}
+		logger := pm.pluginLogger(id, decisionKind)
 		if err := dp.decisionPlugin.Clean(); err != nil {
-			logger.Printf(logging.WARN, "| %s | cannot clean plugin: %v", id, err)
+			logger.Warn("cannot clean plugin", "error", err)
 		}
-		logger.Printf(logging.INFO, "| %s | plugin unloaded", id)
+		logger.Info("plugin unloaded")
 	}
 
 	return nil
@@ -328,10 +370,10 @@ func (p *PluginManager) InitTransaction(transactionId string) {
 // CloseTransaction closes the transaction with the given ID
 // removing all sync model data
 func (p *PluginManager) CloseTransaction(transactionId string) {
-	logger := logging.Get()
+	logger := p.getLogger().With(waceapi.LogKeyTxID, transactionId)
 	transactionMap, ok := p.syncModelsChannels.Load(transactionId)
 	if !ok {
-		logger.TPrintf(logging.ERROR, transactionId, "Transaction %s not found", transactionId)
+		logger.Error("transaction not found")
 	} else {
 		transactionMap.(*sync.Map).Range(func(key, value interface{}) bool {
 			ch := value.(chan ModelStatus)
@@ -344,7 +386,7 @@ func (p *PluginManager) CloseTransaction(transactionId string) {
 		p.syncModelsChannels.Delete(transactionId)
 		resultsMap, ok := p.results.Load(transactionId)
 		if !ok {
-			logger.TPrintf(logging.ERROR, transactionId, "Results for transaction %s not found", transactionId)
+			logger.Error("results for transaction not found")
 		} else {
 			resultsMap.(*sync.Map).Range(func(key, value interface{}) bool {
 				resultsMap.(*sync.Map).Delete(key)
@@ -390,8 +432,7 @@ func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t configst
 			p.asyncModelsChannels.Delete(transactionId)
 		}
 	} else {
-		logger := logging.Get()
-		logger.TPrintf(logging.ERROR, transactionId, "Transaction %s not found when trying to remove async model channel", transactionId)
+		p.getLogger().Error("transaction not found when trying to remove async model channel", waceapi.LogKeyTxID, transactionId)
 	}
 }
 
@@ -411,7 +452,7 @@ func (p *PluginManager) AddToQueue(modelID, transactionID string, payload waceap
 	return p.natConn.Publish(modelID, jsonPayload)
 }
 
-func (p *PluginManager) modelProcess(modelID string, mp modelPluginData, payload waceapi.ModelInput, t configstore.ModelPluginType) (waceapi.ModelResults, error) {
+func (p *PluginManager) modelProcess(ctx context.Context, modelID string, mp modelPluginData, payload waceapi.ModelInput, t configstore.ModelPluginType) (waceapi.ModelResults, error) {
 	// check if the plugin is capable of analyzing the indicated part of the transaction
 	if mp.pluginType != t {
 		return waceapi.ModelResults{}, fmt.Errorf("plugin type %v cannot process a request with incompatible type %v", mp.pluginType, t)
@@ -425,7 +466,7 @@ func (p *PluginManager) modelProcess(modelID string, mp modelPluginData, payload
 	if conf.IsAsync(modelID) {
 		return waceapi.ModelResults{}, fmt.Errorf("model plugin is async")
 	}
-	return mp.modelPlugin.Process(payload)
+	return mp.modelPlugin.Process(ctx, payload)
 }
 
 // Process is in charge of calling the model plugin with id modelID
@@ -438,7 +479,8 @@ func (p *PluginManager) Process(modelID, transactionID string, payload waceapi.H
 		return
 	}
 
-	res, err := p.modelProcess(modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload}, t)
+	// TODO: receive the context from Analyze
+	res, err := p.modelProcess(context.TODO(), modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload}, t)
 
 	if err != nil {
 		modelPlugStatus <- ModelStatus{ModelID: modelID, Err: err}
@@ -457,7 +499,7 @@ func (p *PluginManager) Process(modelID, transactionID string, payload waceapi.H
 // CheckResult is in charge of calling the decision plugin with id decisionID over the
 // transaction with id transactionID
 func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, wafData waceapi.WAFData) (bool, bool, error) {
-	logger := logging.Get()
+	logger := p.getLogger().With(waceapi.LogKeyTxID, transactionID)
 
 	transactionResults, ok := p.results.Load(transactionID)
 	if !ok {
@@ -486,6 +528,7 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 			return false, false, fmt.Errorf("decision plugin not found")
 		}
 
+		logger := logger.With(waceapi.LogKeyPluginType, waceapi.LogValueDecisionPluginType, waceapi.LogKeyPlugin, id)
 		dpConf := cs.DecisionPlugins[id]
 		input := waceapi.DecisionInput{
 			TransactionId: transactionID,
@@ -503,15 +546,17 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 				continue
 			}
 			go func() {
-				res, err := dp.decisionPlugin.CheckResults(input)
+				// TODO: receive the context from CheckTransaction; the sample is
+				// collected after the request, so it must not be cancelled with it
+				res, err := dp.decisionPlugin.CheckResults(context.TODO(), input)
 				if err != nil {
-					logger.TPrintf(logging.WARN, transactionID, "%s | training check failed, dropping sample: %v", id, err)
+					logger.Warn("training check failed, dropping sample", "error", err)
 					return
 				}
 				select {
 				case dp.trainingChannel <- res:
 				case <-dp.trainingCtx.Done():
-					logger.TPrintf(logging.DEBUG, transactionID, "training cancelled for decision %s, dropping result", id)
+					logger.Debug("training cancelled, dropping result")
 				}
 			}()
 			continue
@@ -523,11 +568,12 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 		}
 		enabledPluginFound = true
 
-		res, err := dp.decisionPlugin.CheckResults(input)
+		// TODO: receive the context from CheckTransaction
+		res, err := dp.decisionPlugin.CheckResults(context.TODO(), input)
 		if err != nil {
 			return false, true, err
 		}
-		logger.TPrintf(logging.INFO, transactionID, "%s | transaction checked. Block: %t ", id, res.Block)
+		logger.Info("transaction checked", "block", res.Block)
 		result = res.Block
 	}
 
@@ -536,7 +582,6 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 
 // ModelResultsHandler listens for messages on the model results queue
 func (p *PluginManager) ModelResultsHandler(modelID string) error {
-	logger := logging.Get()
 	cs, err := configstore.Get()
 	if err != nil {
 		return err
@@ -547,7 +592,7 @@ func (p *PluginManager) ModelResultsHandler(modelID string) error {
 			data := &ModelTransmitionResults{}
 			err := json.Unmarshal(msg.Data, data)
 			if err != nil {
-				logger.Printf(logging.ERROR, "Model: %s | Failed to parse JSON payload", modelID)
+				p.pluginLogger(modelID, modelKind).Error("failed to parse JSON results payload", "error", err)
 			} else {
 				var channel interface{}
 				var ok bool
@@ -557,11 +602,11 @@ func (p *PluginManager) ModelResultsHandler(modelID string) error {
 					channel, ok = p.syncModelsChannels.Load(data.TransactionId)
 				}
 				if !ok {
-					logger.TPrintf(logging.ERROR, data.TransactionId, " Model %s | Transaction not found", modelID)
+					p.pluginLogger(modelID, modelKind).Error("transaction not found", waceapi.LogKeyTxID, data.TransactionId)
 				} else {
 					modelChannel, ok := channel.(*sync.Map).Load(cs.ModelPlugins[modelID].PluginType.String())
 					if !ok {
-						logger.Printf(logging.ERROR, "Model %s not found", modelID)
+						p.pluginLogger(modelID, modelKind).Error("model channel not found", waceapi.LogKeyTxID, data.TransactionId)
 					} else {
 						if data.Error != nil {
 							modelChannel.(chan ModelStatus) <- ModelStatus{ModelID: modelID, Err: data.Error}
@@ -585,11 +630,11 @@ func (p *PluginManager) ModelResultsHandler(modelID string) error {
 	})
 
 	if err != nil {
-		logger.Printf(logging.ERROR, "Model: %s | Failed to subscribe to model queue | %s", modelID, err.Error())
+		p.pluginLogger(modelID, modelKind).Error("failed to subscribe to model results queue", "error", err)
 		return err
 	}
 
-	logger.Printf(logging.INFO, "Model: %s | Listening for messages on model results queue", modelID)
+	p.pluginLogger(modelID, modelKind).Info("listening for messages on model results queue")
 
 	defer sub.Unsubscribe()
 	defer p.natConn.Drain()
@@ -599,9 +644,8 @@ func (p *PluginManager) ModelResultsHandler(modelID string) error {
 }
 
 // ModelProcessHandler listens for messages on the model queue
-func ModelProcessHandler(modelId string, modelProcess func(waceapi.ModelInput) (waceapi.ModelResults, error)) error {
-	logger := logging.Get()
-	logger.Printf(logging.INFO, "Model: %s | Starting model process handler", modelId)
+func (p *PluginManager) ModelProcessHandler(modelId string, modelProcess func(context.Context, waceapi.ModelInput) (waceapi.ModelResults, error)) error {
+	p.pluginLogger(modelId, modelKind).Info("starting model process handler")
 	cs, err := configstore.Get()
 	if err != nil {
 		return err
@@ -610,7 +654,7 @@ func ModelProcessHandler(modelId string, modelProcess func(waceapi.ModelInput) (
 	nc, err := nats.Connect(cs.NatsURL)
 
 	if err != nil {
-		logger.Printf(logging.ERROR, "Model: %s | Failed to connect to NATS server", modelId)
+		p.pluginLogger(modelId, modelKind).Error("failed to connect to NATS server", "nats.url", cs.NatsURL, "error", err)
 		return err
 	}
 
@@ -619,9 +663,10 @@ func ModelProcessHandler(modelId string, modelProcess func(waceapi.ModelInput) (
 			data := &waceapi.ModelInput{}
 			err := json.Unmarshal(msg.Data, data)
 			if err != nil {
-				logger.Printf(logging.ERROR, "Model: %s | Failed to parse JSON payload", modelId)
+				p.pluginLogger(modelId, modelKind).Error("failed to parse JSON input payload", "error", err)
 			} else {
-				res, err := modelProcess(*data)
+				// TODO: propagate the context of the request through NATS
+				res, err := modelProcess(context.TODO(), *data)
 				modelResult := waceapi.ModelResults{ProbAttack: res.ProbAttack, Data: res.Data}
 				payloadToSend := &ModelTransmitionResults{
 					TransactionId: data.TransactionId,
@@ -632,7 +677,7 @@ func ModelProcessHandler(modelId string, modelProcess func(waceapi.ModelInput) (
 				jsonPayload, err := json.Marshal(payloadToSend)
 
 				if err != nil {
-					logger.Printf(logging.ERROR, "Model: %s | Failed to parse JSON payload", modelId)
+					p.pluginLogger(modelId, modelKind).Error("failed to encode JSON results payload", waceapi.LogKeyTxID, data.TransactionId, "error", err)
 				}
 
 				nc.Publish(modelId+"/results", jsonPayload)
@@ -641,10 +686,10 @@ func ModelProcessHandler(modelId string, modelProcess func(waceapi.ModelInput) (
 	})
 
 	if err != nil {
-		logger.Printf(logging.ERROR, "Model: %s | Failed to subscribe to model queue | %s", modelId, err.Error())
+		p.pluginLogger(modelId, modelKind).Error("failed to subscribe to model queue", "error", err)
 		return err
 	}
 
-	logger.Printf(logging.INFO, "Model: %s | Listening for messages on model queue", modelId)
+	p.pluginLogger(modelId, modelKind).Info("listening for messages on model queue")
 	return nil
 }

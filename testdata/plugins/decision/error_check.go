@@ -4,25 +4,25 @@
 package main
 
 import (
+	"context"
 	"errors"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
-	"go.opentelemetry.io/otel/metric"
 )
 
 type errorCheckDecision struct{}
 
 // NewPlugin intitalizes the plugin (does nothing in this case)
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.DecisionPlugin, error) {
 	return &errorCheckDecision{}, nil
 }
 
 // CheckResults always returns an error
-func (d *errorCheckDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+func (d *errorCheckDecision) CheckResults(ctx context.Context, decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	return waceapi.DecisionResult{}, errors.New("Some error")
 }
 
-func (d *errorCheckDecision) Reload(params map[string]string, meter metric.Meter) error {
+func (d *errorCheckDecision) Reload(cfg waceapi.PluginConfig) error {
 	return nil
 }
 

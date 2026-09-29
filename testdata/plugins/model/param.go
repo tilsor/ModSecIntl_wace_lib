@@ -6,30 +6,32 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
 type paramModel struct {
+	logger atomic.Pointer[slog.Logger]
 	mu     sync.RWMutex
 	result float64
 }
 
 // NewPlugin reads the "result" param and sets the probability that Process will return.
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugin, error) {
-	logger := lg.Get()
-	logger.Printf(lg.WARN, "[param:NewPlugin] %v\n", params)
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.ModelPlugin, error) {
+	cfg.Logger.Warn("NewPlugin", "params", cfg.Params)
 	m := &paramModel{}
-	if err := m.Reload(params, meter); err != nil {
+	m.logger.Store(cfg.Logger)
+	if err := m.Reload(cfg); err != nil {
 		return nil, err
 	}
 	ctx := context.Background()
-	pluginCounter, err := meter.Int64Counter("plugin_register")
+	pluginCounter, err := cfg.Meter.Int64Counter("plugin_register")
 	if err != nil {
 		return nil, err
 	}
@@ -37,9 +39,8 @@ func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugi
 	return m, nil
 }
 
-func (m *paramModel) Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
-	logger := lg.Get()
-	logger.TPrintf(lg.WARN, input.TransactionId, "[param:Process] \"%v\"\n", input.Payload)
+func (m *paramModel) Process(ctx context.Context, input waceapi.ModelInput) (waceapi.ModelResults, error) {
+	m.logger.Load().Warn("Process", waceapi.LogKeyTxID, input.TransactionId, "payload", input.Payload)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return waceapi.ModelResults{
@@ -49,10 +50,10 @@ func (m *paramModel) Process(input waceapi.ModelInput) (waceapi.ModelResults, er
 }
 
 // Reload updates the probability returned by Process from the new params.
-func (m *paramModel) Reload(params map[string]string, meter metric.Meter) error {
-	logger := lg.Get()
-	logger.Printf(lg.WARN, "[param:Reload] %v\n", params)
-	resultString, ok := params["result"]
+func (m *paramModel) Reload(cfg waceapi.PluginConfig) error {
+	m.logger.Store(cfg.Logger)
+	cfg.Logger.Warn("Reload", "params", cfg.Params)
+	resultString, ok := cfg.Params["result"]
 	if !ok {
 		return fmt.Errorf("result parameter not found")
 	}

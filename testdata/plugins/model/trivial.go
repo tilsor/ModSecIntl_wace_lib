@@ -5,32 +5,35 @@ package main
 
 import (
 	"context"
+	"log/slog"
+	"sync/atomic"
 
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
-type trivialModel struct{}
+type trivialModel struct {
+	logger atomic.Pointer[slog.Logger]
+}
 
 // NewPlugin intitalizes the plugin (does nothing in this case)
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugin, error) {
-	logger := lg.Get()
-	logger.Printf(lg.WARN, "[trivial:NewPlugin] %v\n", params)
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.ModelPlugin, error) {
+	cfg.Logger.Warn("NewPlugin", "params", cfg.Params)
 	// Create counter for plugin register
 	ctx := context.Background()
-	pluginCounter, err := meter.Int64Counter("plugin_register")
+	pluginCounter, err := cfg.Meter.Int64Counter("plugin_register")
 	if err != nil {
 		return nil, err
 	}
 	pluginCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("plugin_name", "trivial"), attribute.String("plugin_type", "model")))
-	return &trivialModel{}, nil
+	m := &trivialModel{}
+	m.logger.Store(cfg.Logger)
+	return m, nil
 }
 
-func (m *trivialModel) Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
-	logger := lg.Get()
-	logger.TPrintf(lg.WARN, input.TransactionId, "[trivial:Process] \"%v\"\n", input.Payload)
+func (m *trivialModel) Process(ctx context.Context, input waceapi.ModelInput) (waceapi.ModelResults, error) {
+	m.logger.Load().Warn("Process", waceapi.LogKeyTxID, input.TransactionId, "payload", input.Payload)
 	result := waceapi.ModelResults{
 		ProbAttack: 0.0,
 		Data:       input,
@@ -39,9 +42,9 @@ func (m *trivialModel) Process(input waceapi.ModelInput) (waceapi.ModelResults, 
 }
 
 // Reload reloads the plugin (does nothing in this case)
-func (m *trivialModel) Reload(params map[string]string, meter metric.Meter) error {
-	logger := lg.Get()
-	logger.Printf(lg.WARN, "[trivial:Reload] %v\n", params)
+func (m *trivialModel) Reload(cfg waceapi.PluginConfig) error {
+	m.logger.Store(cfg.Logger)
+	cfg.Logger.Warn("Reload", "params", cfg.Params)
 	return nil
 }
 

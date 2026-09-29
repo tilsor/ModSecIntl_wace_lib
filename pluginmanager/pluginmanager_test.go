@@ -2,17 +2,19 @@ package pluginmanager
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -20,8 +22,6 @@ import (
 )
 
 var baseConfig = `---
-logpath: "/dev/null"
-loglevel: "WARN"
 `
 
 var trivialPlugin = `  - id: "trivial"
@@ -104,13 +104,17 @@ var wrongCheckPlugin = `  - id: "wrong_check"
 
 var provider = metric.NewMeterProvider()
 var testMeter = provider.Meter("pluginmanager-test-meter")
+var discardLogger = slog.New(slog.DiscardHandler)
+
+// newDiscardPluginManager returns an empty PluginManager that discards its logs.
+func newDiscardPluginManager() *PluginManager {
+	pm := &PluginManager{}
+	pm.setLogger(discardLogger)
+	return pm
+}
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	logger := logging.Get()
-	if err := logger.LoadLogger("/dev/null", logging.ERROR); err != nil {
-		panic("Error loading logger: " + err.Error())
-	}
 }
 
 func generateRandomID() string {
@@ -127,6 +131,12 @@ func generateRandomID() string {
 // test cleanup function.
 func setupPluginManager(t *testing.T, configuration []byte) *PluginManager {
 	t.Helper()
+	return setupPluginManagerWithLogger(t, configuration, discardLogger)
+}
+
+// setupPluginManagerWithLogger is setupPluginManager with the given logger.
+func setupPluginManagerWithLogger(t *testing.T, configuration []byte, logger *slog.Logger) *PluginManager {
+	t.Helper()
 	configstore.Clean()
 	cs, err := configstore.New()
 	if err != nil {
@@ -141,7 +151,7 @@ func setupPluginManager(t *testing.T, configuration []byte) *PluginManager {
 	if err := cs.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig failed: %v", err)
 	}
-	pm, err := New(testMeter)
+	pm, err := New(testMeter, logger)
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -153,6 +163,138 @@ func TestPluginManagerNew(t *testing.T) {
 	pm := setupPluginManager(t, config)
 	if pm == nil {
 		t.Fatal("New() returned nil plugin manager")
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent writes from a slog handler.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestPluginManagerPluginLogger checks that the plugin manager and the
+// plugins log with their own component and that no attribute is duplicated.
+func TestPluginManagerPluginLogger(t *testing.T) {
+	var out syncBuffer
+	logger := slog.New(slog.NewJSONHandler(&out, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	config := []byte(baseConfig + "model_plugins:\n" + trivialPlugin)
+	setupPluginManagerWithLogger(t, config, logger)
+
+	want := map[string]map[string]string{
+		// logged by the trivial plugin with cfg.Logger
+		"NewPlugin": {
+			waceapi.LogKeyComponent:  "plugin",
+			waceapi.LogKeyPluginType: waceapi.LogValueModelPluginType,
+			waceapi.LogKeyPlugin:     "trivial",
+		},
+		// logged by the plugin manager
+		"plugin loaded": {
+			waceapi.LogKeyComponent:  "pluginmanager",
+			waceapi.LogKeyPluginType: waceapi.LogValueModelPluginType,
+			waceapi.LogKeyPlugin:     "trivial",
+		},
+	}
+	found := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("invalid log line %q: %v", line, err)
+		}
+		msg, _ := record["msg"].(string)
+		attrs, ok := want[msg]
+		if !ok {
+			continue
+		}
+		found[msg] = true
+		for key, value := range attrs {
+			if got := record[key]; got != value {
+				t.Errorf("%q: %s = %v, want %q", msg, key, got, value)
+			}
+			// the JSON handler writes duplicated attributes twice
+			if n := strings.Count(line, `"`+key+`":`); n != 1 {
+				t.Errorf("%q: %s appears %d times: %s", msg, key, n, line)
+			}
+		}
+	}
+	for msg := range want {
+		if !found[msg] {
+			t.Errorf("log record %q not found in:\n%s", msg, out.String())
+		}
+	}
+}
+
+// hasRecord reports whether the JSON log output has a record with the
+// given message and component.
+func hasRecord(t *testing.T, out string, msg, component string) bool {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("invalid log line %q: %v", line, err)
+		}
+		if record["msg"] == msg && record[waceapi.LogKeyComponent] == component {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPluginManagerReloadLogger checks that after a Reload with a new logger the
+// plugin manager and the plugins log only to the new logger.
+func TestPluginManagerReloadLogger(t *testing.T) {
+	var oldOut, newOut syncBuffer
+	oldLogger := slog.New(slog.NewJSONHandler(&oldOut, nil))
+	newLogger := slog.New(slog.NewJSONHandler(&newOut, nil))
+	config := []byte(baseConfig + "model_plugins:\n" + trivialPlugin)
+	pm := setupPluginManagerWithLogger(t, config, oldLogger)
+	if !hasRecord(t, oldOut.String(), "NewPlugin", "plugin") {
+		t.Fatalf("NewPlugin record not found in the old logger:\n%s", oldOut.String())
+	}
+	oldLen := len(oldOut.String())
+
+	if err := pm.Reload(testMeter, newLogger); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	// logged by the trivial plugin with the logger received in Reload
+	if !hasRecord(t, newOut.String(), "Reload", "plugin") {
+		t.Errorf("Reload record not found in the new logger:\n%s", newOut.String())
+	}
+
+	// logged by the trivial plugin with the logger it keeps
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	ch := make(chan ModelStatus, 1)
+	pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	if status := <-ch; status.Err != nil {
+		t.Fatalf("Process: %v", status.Err)
+	}
+	if !hasRecord(t, newOut.String(), "Process", "plugin") {
+		t.Errorf("Process record not found in the new logger:\n%s", newOut.String())
+	}
+
+	// logged by the plugin manager: the transaction has no sync channels
+	pm.CloseTransaction(txID)
+	if !hasRecord(t, newOut.String(), "transaction not found", "pluginmanager") {
+		t.Errorf("plugin manager record not found in the new logger:\n%s", newOut.String())
+	}
+
+	if got := oldOut.String()[oldLen:]; got != "" {
+		t.Errorf("old logger received records after Reload:\n%s", got)
 	}
 }
 
@@ -399,7 +541,7 @@ func TestPluginManagerReload(t *testing.T) {
 	config := []byte(baseConfig + "model_plugins:\n" + trivialPlugin + "decision_plugins:\n" + simplePlugin)
 	pm := setupPluginManager(t, config)
 
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload() returned error: %v", err)
 	}
 
@@ -493,7 +635,7 @@ func TestPluginManagerReloadChangesOutput(t *testing.T) {
 		t.Fatalf("SetConfig with updated params: %v", err)
 	}
 
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -565,7 +707,7 @@ func TestPluginManagerSamePluginMultipleInstances(t *testing.T) {
 	check("param_b", 0.8)
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+paramInstanceConf("param_a", "0.5")+paramInstanceConf("param_b", "0.8"))
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -581,7 +723,7 @@ func TestPluginManagerReloadUnloadsRemovedPlugins(t *testing.T) {
 	pm := setupPluginManager(t, []byte(config))
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+trivialPlugin+"decision_plugins:\n"+simplePlugin)
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -809,7 +951,7 @@ func TestPluginManagerTrainingReloadDisablesTraining(t *testing.T) {
 	if err := cs.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1062,7 +1204,7 @@ func TestPluginManagerDecisionTrainingReloadDisables(t *testing.T) {
 	if err := cs.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1161,7 +1303,7 @@ func TestPluginManagerReloadCleansOnlyRemovedPlugins(t *testing.T) {
 	pm := setupPluginManager(t, []byte(config))
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+lifecycleModelConf("model_kept", keptModel, false))
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1191,7 +1333,7 @@ func TestPluginManagerReloadUnloadsEvenIfCleanFails(t *testing.T) {
 	pm := setupPluginManager(t, []byte(config))
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+trivialPlugin)
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1216,7 +1358,7 @@ func TestPluginManagerReloadUnloadCancelsTraining(t *testing.T) {
 	dp := pm.decisionPlugins["simple_training"]
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+trivial2Plugin)
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1235,7 +1377,7 @@ func TestPluginManagerReloadInvalidParamsKeepsState(t *testing.T) {
 	pm := setupPluginManager(t, []byte(baseConfig+"model_plugins:\n"+paramInstanceConf("param", "0.3")))
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+paramInstanceConf("param", "not-a-number"))
-	if err := pm.Reload(testMeter); err != nil {
+	if err := pm.Reload(testMeter, discardLogger); err != nil {
 		t.Fatalf("Reload should log plugin reload errors, not return them: %v", err)
 	}
 
@@ -1376,7 +1518,7 @@ func TestPluginManagerConcurrentReloadAndRequests(t *testing.T) {
 
 	ready.Wait()
 	for i := 0; i < 20; i++ {
-		if err := pm.Reload(testMeter); err != nil {
+		if err := pm.Reload(testMeter, discardLogger); err != nil {
 			t.Errorf("Reload: %v", err)
 		}
 	}
@@ -1440,7 +1582,7 @@ func TestPluginManagerReloadTrainingTransitions(t *testing.T) {
 			reload := func(config string) {
 				t.Helper()
 				applyConfig(t, config)
-				if err := pm.Reload(testMeter); err != nil {
+				if err := pm.Reload(testMeter, discardLogger); err != nil {
 					t.Fatalf("Reload: %v", err)
 				}
 			}

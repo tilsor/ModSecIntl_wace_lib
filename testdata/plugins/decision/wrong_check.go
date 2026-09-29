@@ -5,22 +5,22 @@
 package main
 
 import (
+	"context"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
-	"go.opentelemetry.io/otel/metric"
 )
 
 type wrongCheckDecision struct{}
 
 // NewPlugin has the wrong return type
-func NewPlugin(params map[string]string, meter metric.Meter) (*wrongCheckDecision, error) {
+func NewPlugin(cfg waceapi.PluginConfig) (*wrongCheckDecision, error) {
 	return &wrongCheckDecision{}, nil
 }
 
-func (d *wrongCheckDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+func (d *wrongCheckDecision) CheckResults(ctx context.Context, decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	return waceapi.DecisionResult{Block: false}, nil
 }
 
-func (d *wrongCheckDecision) Reload(params map[string]string, meter metric.Meter) error {
+func (d *wrongCheckDecision) Reload(cfg waceapi.PluginConfig) error {
 	return nil
 }
 

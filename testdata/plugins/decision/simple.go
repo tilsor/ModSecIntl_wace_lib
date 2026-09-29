@@ -5,33 +5,38 @@ package main
 
 import (
 	"context"
+	"log/slog"
+	"sync/atomic"
 
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
-type simpleDecision struct{}
+type simpleDecision struct {
+	logger atomic.Pointer[slog.Logger]
+}
 
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.DecisionPlugin, error) {
 	// Create counter for plugin register
 	ctx := context.Background()
-	pluginCounter, err := meter.Int64Counter("plugin_register")
+	pluginCounter, err := cfg.Meter.Int64Counter("plugin_register")
 	if err != nil {
 		return nil, err
 	}
 	pluginCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("plugin_name", "simple"), attribute.String("plugin_type", "decision")))
-	return &simpleDecision{}, nil
+	d := &simpleDecision{}
+	d.logger.Store(cfg.Logger)
+	return d, nil
 }
 
-func (d *simpleDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
-	logger := lg.Get()
+func (d *simpleDecision) CheckResults(ctx context.Context, decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+	logger := d.logger.Load().With(waceapi.LogKeyTxID, decisionInput.TransactionId)
 	var totalModelW float64 = 0
 	var modelDetectionCount int = 0
 	var totalModelProb float64 = 0
 	for key, value := range decisionInput.Results {
-		logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "simple | model_id: %v result: %v", key, value)
+		logger.Debug("model result", "model.id", key, "model.result", value)
 		if value.ProbAttack >= 0.5 {
 			modelDetectionCount++
 			totalModelW += decisionInput.ModelWeight[key]
@@ -39,7 +44,7 @@ func (d *simpleDecision) CheckResults(decisionInput waceapi.DecisionInput) (wace
 	}
 
 	for key, value := range decisionInput.WAFdata.Scores {
-		logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "simple | WAF score: %v: %v", key, value)
+		logger.Debug("WAF score", "score.name", key, "score.value", value)
 	}
 
 	// if we have some model results
@@ -49,7 +54,7 @@ func (d *simpleDecision) CheckResults(decisionInput waceapi.DecisionInput) (wace
 	if len(decisionInput.WAFdata.Scores) != 0 {
 		as := decisionInput.WAFdata.Scores["inbound_blocking"]
 		it := decisionInput.WAFdata.Scores["inbound_threshold"]
-		logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "Coraza | Anomaly score: %v Anomaly score threshold: %v ", as, it)
+		logger.Debug("WAF anomaly score", "anomaly_score", as, "anomaly_score.threshold", it)
 
 		if as >= it && totalModelProb > 0.5 { // coraza wants to block and models agree
 			return waceapi.DecisionResult{Block: true}, nil
@@ -59,7 +64,8 @@ func (d *simpleDecision) CheckResults(decisionInput waceapi.DecisionInput) (wace
 }
 
 // Reload reloads the plugin (does nothing in this case)
-func (d *simpleDecision) Reload(params map[string]string, meter metric.Meter) error {
+func (d *simpleDecision) Reload(cfg waceapi.PluginConfig) error {
+	d.logger.Store(cfg.Logger)
 	return nil
 }
 

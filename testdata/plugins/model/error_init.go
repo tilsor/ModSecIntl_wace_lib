@@ -7,10 +7,9 @@ import (
 	"errors"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
-	"go.opentelemetry.io/otel/metric"
 )
 
 // NewPlugin always fails
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugin, error) {
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.ModelPlugin, error) {
 	return nil, errors.New("Some error")
 }

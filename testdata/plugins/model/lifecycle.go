@@ -10,11 +10,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
-	"go.opentelemetry.io/otel/metric"
 )
 
 type lifecycleModel struct {
@@ -22,21 +22,21 @@ type lifecycleModel struct {
 	failClean bool
 }
 
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugin, error) {
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.ModelPlugin, error) {
 	return &lifecycleModel{
-		cleanFile: params["clean_file"],
-		failClean: params["fail_clean"] == "true",
+		cleanFile: cfg.Params["clean_file"],
+		failClean: cfg.Params["fail_clean"] == "true",
 	}, nil
 }
 
-func (m *lifecycleModel) Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
+func (m *lifecycleModel) Process(ctx context.Context, input waceapi.ModelInput) (waceapi.ModelResults, error) {
 	return waceapi.ModelResults{
 		ProbAttack: 0.0,
 		Data:       map[string]bool{"training": input.Training},
 	}, nil
 }
 
-func (m *lifecycleModel) Reload(params map[string]string, meter metric.Meter) error {
+func (m *lifecycleModel) Reload(cfg waceapi.PluginConfig) error {
 	return nil
 }
 
