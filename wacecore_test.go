@@ -166,29 +166,6 @@ decision_plugins:
     decisionbalance: 0.1
 `)
 
-var configSyncRemote = []byte(`---
-#The level of debug, the valid options are - ERRO, WARN, INFO, DEBUG
-
-#The model plugins configuration
-model_plugins:
-  - id: "trivial"
-    plugin_type: RequestHeaders
-    path: "testdata/plugins/model/trivial.so"
-    mode: sync
-    remote: true
-  - id: "trivial2"
-    plugin_type: RequestHeaders
-    path: "testdata/plugins/model/trivial2.so"
-    mode: sync
-    remote: true
-#The decision plugin configuration
-decision_plugins:
-  - id: "simple"
-    path: "testdata/plugins/decision/simple.so"
-#    waf_weight: 0.5
-    decisionbalance: 0.1
-`)
-
 var configAsync = []byte(`---
 #The level of debug, the valid options are - ERRO, WARN, INFO, DEBUG
 
@@ -376,7 +353,7 @@ func TestAnalyzeInvalidType(t *testing.T) {
 	}
 }
 
-// TestInitDuplicate covers the configstore.New() error branch in Init: calling
+// TestInitDuplicate covers the already-initialized branch in Init: calling
 // Init a second time without Clean in between must return an error.
 func TestInitDuplicate(t *testing.T) {
 	err := initialize(config)
@@ -388,6 +365,25 @@ func TestInitDuplicate(t *testing.T) {
 	err = initialize(config)
 	if err == nil {
 		t.Error("second Init without Clean should return error")
+	}
+}
+
+// TestReloadBeforeInit checks that Reload without a loaded configuration
+// returns an error instead of reloading a plugin manager that may not
+// exist, and does not publish the given configuration.
+func TestReloadBeforeInit(t *testing.T) {
+	configstore.Clean()
+	defer configstore.Clean()
+	var conf configstore.ConfigFileData
+	if err := yaml.Unmarshal(config, &conf); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+
+	if err := Reload(testMeter, conf, discardLogger); err == nil {
+		t.Error("Reload before Init should return error")
+	}
+	if _, err := configstore.Get(); err == nil {
+		t.Error("Reload before Init published a configuration")
 	}
 }
 
@@ -686,29 +682,6 @@ func BenchmarkTrivial(b *testing.B) {
 	wafParams := parseWAFParams("COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2")
 	for i := 0; i < b.N; i++ {
 		transactionId := strconv.Itoa(i)
-		InitTransaction(transactionId)
-
-		Analyze("RequestHeaders", transactionId, waceapi.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
-
-		_, _, err := CheckTransaction(transactionId, []string{"simple"}, wafParams)
-		if err != nil {
-			b.Errorf("Error checking transaction: %v", err)
-		}
-		CloseTransaction(transactionId)
-	}
-}
-
-func BenchmarkTrivialFullNATS(b *testing.B) {
-	err := initialize(configSyncRemote)
-	defer configstore.Clean()
-	if err != nil {
-		b.Errorf("Error initing test: %v", err)
-	}
-
-	time.Sleep(2 * time.Millisecond)
-	wafParams := parseWAFParams("COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=0,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2")
-	for i := 0; i < b.N; i++ {
-		transactionId := generateRandomID()
 		InitTransaction(transactionId)
 
 		Analyze("RequestHeaders", transactionId, waceapi.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})

@@ -1,0 +1,371 @@
+goos: linux
+goarch: amd64
+pkg: github.com/tilsor/ModSecIntl_wace_lib
+cpu: 12th Gen Intel(R) Core(TM) i5-12400
+BenchmarkTransactionSync/models=1-12   	   48148	     23731 ns/op	    4240 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=1-12   	   44102	     24927 ns/op	    4239 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=1-12   	   56262	     21829 ns/op	    4239 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=1-12   	   57630	     21396 ns/op	    4235 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=1-12   	   56252	     22443 ns/op	    4242 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=1-12   	   52423	     20234 ns/op	    4241 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=1-12   	   52953	     22738 ns/op	    4240 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=1-12   	   46525	     22950 ns/op	    4230 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=1-12   	   44541	     25712 ns/op	    4233 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=1-12   	   58266	     22219 ns/op	    4233 B/op	      83 allocs/op
+BenchmarkTransactionSync/models=4-12   	   26006	     46492 ns/op	    8337 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=4-12   	   26044	     45416 ns/op	    8270 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=4-12   	   26270	     45345 ns/op	    8272 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=4-12   	   26932	     46247 ns/op	    8297 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=4-12   	   25927	     46377 ns/op	    8278 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=4-12   	   26215	     44349 ns/op	    8257 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=4-12   	   26844	     44338 ns/op	    8285 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=4-12   	   25784	     47060 ns/op	    8273 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=4-12   	   25656	     45134 ns/op	    8318 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=4-12   	   27600	     44904 ns/op	    8301 B/op	     132 allocs/op
+BenchmarkTransactionSync/models=16-12  	   14602	     80398 ns/op	   27375 B/op	     333 allocs/op
+BenchmarkTransactionSync/models=16-12  	   15141	     79024 ns/op	   27398 B/op	     333 allocs/op
+BenchmarkTransactionSync/models=16-12  	   12873	     91901 ns/op	   27346 B/op	     333 allocs/op
+BenchmarkTransactionSync/models=16-12  	   15135	     80097 ns/op	   27370 B/op	     333 allocs/op
+BenchmarkTransactionSync/models=16-12  	   15147	     78871 ns/op	   27433 B/op	     333 allocs/op
+BenchmarkTransactionSync/models=16-12  	   15129	     79355 ns/op	   27438 B/op	     333 allocs/op
+BenchmarkTransactionSync/models=16-12  	   14524	     85794 ns/op	   27461 B/op	     333 allocs/op
+BenchmarkTransactionSync/models=16-12  	   14610	     80970 ns/op	   27493 B/op	     333 allocs/op
+BenchmarkTransactionSync/models=16-12  	   12488	     94104 ns/op	   27425 B/op	     333 allocs/op
+BenchmarkTransactionSync/models=16-12  	   14028	     85408 ns/op	   27457 B/op	     333 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  278098	      4396 ns/op	    4496 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  241569	      6066 ns/op	    4556 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  298302	      4318 ns/op	    4524 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  268063	      4111 ns/op	    4516 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  323923	      4059 ns/op	    4491 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  315718	      4502 ns/op	    4523 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  286330	      4121 ns/op	    4523 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  288504	      4267 ns/op	    4534 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  303008	      4386 ns/op	    4526 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=1-12         	  253489	      4378 ns/op	    4528 B/op	      83 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  149547	      7758 ns/op	    8477 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  171232	      7590 ns/op	    8503 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  157058	      7659 ns/op	    8475 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  156892	      8398 ns/op	    8503 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  156790	      7574 ns/op	    8509 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  144192	      7653 ns/op	    8445 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  170172	      8778 ns/op	    8566 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  145140	      7667 ns/op	    8507 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  167098	      7424 ns/op	    8472 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=4-12         	  156412	      7585 ns/op	    8471 B/op	     133 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   37683	     33545 ns/op	   29815 B/op	     335 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   36277	     31483 ns/op	   30159 B/op	     335 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   35514	     31643 ns/op	   30592 B/op	     335 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   36818	     32907 ns/op	   29889 B/op	     335 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   34999	     31405 ns/op	   30028 B/op	     335 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   38826	     31009 ns/op	   30519 B/op	     335 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   38396	     30785 ns/op	   30401 B/op	     335 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   39016	     33451 ns/op	   29837 B/op	     335 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   39223	     31695 ns/op	   29914 B/op	     335 allocs/op
+BenchmarkTransactionSyncParallel/models=16-12        	   37392	     31900 ns/op	   30521 B/op	     335 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 2821623	       399.4 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 2924656	       416.1 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 3008270	       389.7 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 3066578	       396.0 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 3107023	       385.0 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 3048553	       412.7 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 2972050	       411.6 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 2941696	       401.4 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 3053667	       402.9 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/unbuffered-12        	 3135044	       388.1 ns/op	     144 B/op	       3 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2576689	       467.3 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2841033	       440.2 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2812783	       423.8 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2845945	       423.2 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2815639	       430.9 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2841454	       420.3 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2878286	       414.5 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2934199	       430.2 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2960906	       431.1 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=1/buffered-12          	 2772230	       412.3 ns/op	     192 B/op	       4 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  554432	      2215 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  461066	      2196 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  632379	      2197 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  522939	      2194 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  544699	      2096 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  542505	      2099 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  543904	      2172 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  581132	      2168 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  589304	      2134 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/unbuffered-12        	  549166	      2097 ns/op	     216 B/op	       6 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  536052	      2167 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  555502	      2289 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  557647	      2188 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  575676	      2138 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  556456	      2158 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  550426	      2181 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  506818	      2504 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  448826	      2332 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  515083	      2218 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=4/buffered-12          	  564585	      2210 ns/op	     376 B/op	       7 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  116553	      9338 ns/op	     505 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  121166	      9411 ns/op	     504 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  126998	      8983 ns/op	     505 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  132117	      9176 ns/op	     504 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  143811	      9188 ns/op	     504 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  129996	      9096 ns/op	     504 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  151230	      8364 ns/op	     504 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  132921	      9034 ns/op	     504 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  136152	      9480 ns/op	     505 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/unbuffered-12       	  135322	      8961 ns/op	     504 B/op	      18 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  114110	      9749 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  116439	      9994 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  111140	      9541 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  119707	     10060 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  130779	      9903 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  112227	      9802 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  130527	     10066 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  115425	      9504 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  124983	     10046 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkStatusChannel/models=16/buffered-12         	  112414	      9567 ns/op	    1208 B/op	      19 allocs/op
+BenchmarkTransactionPhases-12                                    	   14733	     78698 ns/op	   13767 B/op	     243 allocs/op
+BenchmarkTransactionPhases-12                                    	   16996	     76259 ns/op	   13662 B/op	     243 allocs/op
+BenchmarkTransactionPhases-12                                    	   16296	     72539 ns/op	   13664 B/op	     243 allocs/op
+BenchmarkTransactionPhases-12                                    	   16147	     74793 ns/op	   13630 B/op	     243 allocs/op
+BenchmarkTransactionPhases-12                                    	   15940	     73982 ns/op	   13600 B/op	     243 allocs/op
+BenchmarkTransactionPhases-12                                    	   16328	     77511 ns/op	   13670 B/op	     243 allocs/op
+BenchmarkTransactionPhases-12                                    	   13086	     91574 ns/op	   13680 B/op	     243 allocs/op
+BenchmarkTransactionPhases-12                                    	   15207	     75548 ns/op	   13665 B/op	     243 allocs/op
+BenchmarkTransactionPhases-12                                    	   16792	     72964 ns/op	   13659 B/op	     243 allocs/op
+BenchmarkTransactionPhases-12                                    	   16725	     71376 ns/op	   13702 B/op	     243 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1208932	       992.5 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1284943	       932.0 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1000000	      1003 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1271000	       942.7 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1000000	      1013 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1270732	       946.0 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1275625	       935.5 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1281726	       939.6 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1287974	       927.7 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=1-12            	 1233061	       973.2 ns/op	     904 B/op	      22 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	 1000000	      1147 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	  943993	      1220 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	 1000000	      1174 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	 1000000	      1207 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	 1000000	      1151 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	 1022977	      1164 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	 1000000	      1130 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	 1000000	      1174 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	 1000000	      1198 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=4-12            	 1000000	      1172 ns/op	    1024 B/op	      28 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  382248	      3146 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  403970	      3159 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  392701	      3219 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  365734	      3125 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  374517	      3117 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  393024	      3145 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  379971	      3411 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  375556	      3217 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  340735	      3465 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=simple/models=16-12           	  408144	      3150 ns/op	    3688 B/op	      57 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1409534	       843.1 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1442235	       828.5 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1441982	       831.6 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1450699	       830.1 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1438843	       837.8 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1408084	       849.1 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1334907	       875.1 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1459753	       822.4 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1441428	       829.5 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=1-12      	 1474287	       822.4 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1291917	       934.9 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1274889	       933.3 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1300933	       920.9 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1254994	       949.4 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1242206	       958.4 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1274200	       935.8 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1258616	       952.5 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1301882	       923.5 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1276803	       934.5 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=4-12      	 1303965	       923.8 ns/op	     832 B/op	      18 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  416943	      2595 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  483783	      2511 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  485961	      2590 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  376254	      2663 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  427686	      2517 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  437226	      2633 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  487890	      2587 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  472329	      2710 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  448390	      2650 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkCheckTransaction/decision=weighted_sum/models=16-12     	  415617	      2660 ns/op	    3016 B/op	      23 allocs/op
+BenchmarkTrivial-12                                              	   32355	     32961 ns/op	    5459 B/op	     109 allocs/op
+BenchmarkTrivial-12                                              	   35539	     32362 ns/op	    5468 B/op	     109 allocs/op
+BenchmarkTrivial-12                                              	   35652	     32204 ns/op	    5474 B/op	     109 allocs/op
+BenchmarkTrivial-12                                              	   36115	     31230 ns/op	    5475 B/op	     109 allocs/op
+BenchmarkTrivial-12                                              	   37531	     31430 ns/op	    5470 B/op	     109 allocs/op
+BenchmarkTrivial-12                                              	   37077	     31118 ns/op	    5452 B/op	     109 allocs/op
+BenchmarkTrivial-12                                              	   39284	     32187 ns/op	    5464 B/op	     109 allocs/op
+BenchmarkTrivial-12                                              	   37096	     31326 ns/op	    5468 B/op	     109 allocs/op
+BenchmarkTrivial-12                                              	   34426	     31173 ns/op	    5461 B/op	     109 allocs/op
+BenchmarkTrivial-12                                              	   34458	     33023 ns/op	    5454 B/op	     109 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    2029	    524727 ns/op	   26374 B/op	     409 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    2096	    517362 ns/op	   25880 B/op	     408 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    2221	    540105 ns/op	   26676 B/op	     409 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    2116	    522780 ns/op	   26969 B/op	     409 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    2232	    528969 ns/op	   27210 B/op	     409 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    2172	    533029 ns/op	   26923 B/op	     409 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    1900	    598174 ns/op	   26940 B/op	     408 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    2316	    513015 ns/op	   26108 B/op	     408 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    2023	    546817 ns/op	   25931 B/op	     408 allocs/op
+BenchmarkTransactionRemote/models=1-12         	    2191	    505734 ns/op	   26090 B/op	     408 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1764	    682071 ns/op	  102125 B/op	    1433 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1657	    649280 ns/op	   99428 B/op	    1432 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1765	    654231 ns/op	   96454 B/op	    1431 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1713	    655619 ns/op	   95295 B/op	    1431 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1830	    666463 ns/op	   95870 B/op	    1431 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1682	    639837 ns/op	   94758 B/op	    1431 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1843	    639633 ns/op	   94080 B/op	    1430 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1760	    650159 ns/op	   93837 B/op	    1431 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1716	    644129 ns/op	   93588 B/op	    1430 allocs/op
+BenchmarkTransactionRemote/models=4-12         	    1586	    667095 ns/op	   92555 B/op	    1430 allocs/op
+BenchmarkTransactionRemote/models=16-12        	    1053	   1073288 ns/op	  364409 B/op	    5519 allocs/op
+BenchmarkTransactionRemote/models=16-12        	    1142	   1112054 ns/op	  361336 B/op	    5518 allocs/op
+BenchmarkTransactionRemote/models=16-12        	     950	   1069546 ns/op	  358179 B/op	    5518 allocs/op
+BenchmarkTransactionRemote/models=16-12        	     981	   1135618 ns/op	  357365 B/op	    5516 allocs/op
+BenchmarkTransactionRemote/models=16-12        	    1070	   1040454 ns/op	  355366 B/op	    5518 allocs/op
+BenchmarkTransactionRemote/models=16-12        	    1214	   1012393 ns/op	  354856 B/op	    5518 allocs/op
+BenchmarkTransactionRemote/models=16-12        	     972	   1054478 ns/op	  354265 B/op	    5517 allocs/op
+BenchmarkTransactionRemote/models=16-12        	     982	   1111729 ns/op	  353276 B/op	    5516 allocs/op
+BenchmarkTransactionRemote/models=16-12        	    1148	   1038370 ns/op	  354572 B/op	    5518 allocs/op
+BenchmarkTransactionRemote/models=16-12        	    1086	   1103768 ns/op	  353429 B/op	    5516 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  411778	      2950 ns/op	     232 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  441746	      3015 ns/op	     232 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  425280	      2934 ns/op	     233 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  356354	      3013 ns/op	     233 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  420212	      3084 ns/op	     233 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  414670	      2950 ns/op	     232 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  410278	      2987 ns/op	     233 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  370232	      3030 ns/op	     233 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  413528	      3010 ns/op	     232 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/headers-only-12         	  388168	      3005 ns/op	     233 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	    9654	    112353 ns/op	   9.22 MB/s	    3565 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	   10000	    112084 ns/op	   9.24 MB/s	    3569 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	   10000	    108620 ns/op	   9.54 MB/s	    3569 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	   10000	    110258 ns/op	   9.40 MB/s	    3561 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	   10000	    110263 ns/op	   9.40 MB/s	    3573 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	   10000	    117685 ns/op	   8.80 MB/s	    3569 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	   10000	    111205 ns/op	   9.32 MB/s	    3576 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	   10000	    110695 ns/op	   9.36 MB/s	    3576 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	   10000	    109389 ns/op	   9.47 MB/s	    3565 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=false-12         	   10000	    113524 ns/op	   9.13 MB/s	    3569 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	    9517	    110937 ns/op	   9.48 MB/s	    3681 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	   10000	    112844 ns/op	   9.32 MB/s	    3677 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	   10000	    110281 ns/op	   9.54 MB/s	    3685 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	   10000	    114581 ns/op	   9.18 MB/s	    3677 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	   10000	    110995 ns/op	   9.48 MB/s	    3685 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	   10000	    113138 ns/op	   9.30 MB/s	    3673 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	   10000	    111538 ns/op	   9.43 MB/s	    3685 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	   10000	    110976 ns/op	   9.48 MB/s	    3681 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	   10000	    113986 ns/op	   9.23 MB/s	    3681 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=1KiB/password=true-12          	   10000	    115845 ns/op	   9.08 MB/s	    3677 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     522	   2582279 ns/op	   6.35 MB/s	   56260 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     571	   2188568 ns/op	   7.49 MB/s	   56100 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     544	   2529915 ns/op	   6.48 MB/s	   55965 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     524	   2385575 ns/op	   6.87 MB/s	   56341 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     523	   2330117 ns/op	   7.04 MB/s	   56384 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     537	   2228349 ns/op	   7.36 MB/s	   56237 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     535	   2249566 ns/op	   7.29 MB/s	   56057 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     554	   2189665 ns/op	   7.49 MB/s	   56108 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     561	   2654642 ns/op	   6.18 MB/s	   56166 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=false-12        	     547	   2406451 ns/op	   6.81 MB/s	   56185 B/op	       8 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     519	   2193901 ns/op	   7.48 MB/s	   56307 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     589	   2046914 ns/op	   8.02 MB/s	   56257 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     560	   2134749 ns/op	   7.69 MB/s	   56454 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     553	   2142194 ns/op	   7.66 MB/s	   56615 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     517	   2300249 ns/op	   7.13 MB/s	   56094 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     571	   2168621 ns/op	   7.57 MB/s	   56058 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     571	   2105154 ns/op	   7.80 MB/s	   56097 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     564	   2128833 ns/op	   7.71 MB/s	   56501 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     586	   2091363 ns/op	   7.85 MB/s	   56362 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=16KiB/password=true-12         	     518	   2175359 ns/op	   7.54 MB/s	   55993 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      72	  16838660 ns/op	   7.78 MB/s	  424267 B/op	      11 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      68	  16375648 ns/op	   8.00 MB/s	  422236 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      70	  17146674 ns/op	   7.64 MB/s	  424872 B/op	      11 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      68	  16927785 ns/op	   7.74 MB/s	  423668 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      58	  17641898 ns/op	   7.43 MB/s	  424146 B/op	      11 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      72	  18970423 ns/op	   6.91 MB/s	  425248 B/op	      11 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      68	  18732723 ns/op	   7.00 MB/s	  424216 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      72	  17635819 ns/op	   7.43 MB/s	  421995 B/op	      10 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      68	  17218868 ns/op	   7.61 MB/s	  424634 B/op	      12 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=false-12       	      72	  17342014 ns/op	   7.56 MB/s	  426380 B/op	      12 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      74	  16327514 ns/op	   8.03 MB/s	  423788 B/op	      12 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      72	  18943574 ns/op	   6.92 MB/s	  424260 B/op	      13 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      58	  18147810 ns/op	   7.22 MB/s	  422816 B/op	      12 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      66	  19826379 ns/op	   6.61 MB/s	  425113 B/op	      13 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      73	  17041331 ns/op	   7.69 MB/s	  423670 B/op	      13 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      70	  16501913 ns/op	   7.94 MB/s	  424499 B/op	      14 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      74	  16736099 ns/op	   7.83 MB/s	  421826 B/op	      12 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      73	  16594227 ns/op	   7.90 MB/s	  423968 B/op	      12 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      72	  16772096 ns/op	   7.82 MB/s	  425245 B/op	      13 allocs/op
+BenchmarkSanitizeCredentials/body=128KiB/password=true-12        	      63	  17771900 ns/op	   7.38 MB/s	  425539 B/op	      13 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    8138	    146654 ns/op	   7.17 MB/s	    7779 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    8948	    146273 ns/op	   7.19 MB/s	    7774 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    8497	    143664 ns/op	   7.32 MB/s	    7781 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    7774	    147511 ns/op	   7.13 MB/s	    7790 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    8392	    143403 ns/op	   7.34 MB/s	    7777 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    9084	    148133 ns/op	   7.10 MB/s	    7765 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    8776	    146769 ns/op	   7.17 MB/s	    7770 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    7408	    145559 ns/op	   7.23 MB/s	    7783 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    8674	    145302 ns/op	   7.24 MB/s	    7784 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=1KiB-12         	    8793	    142967 ns/op	   7.36 MB/s	    7792 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     577	   2268392 ns/op	   7.23 MB/s	   60885 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     524	   2282283 ns/op	   7.19 MB/s	   60926 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     452	   2578552 ns/op	   6.36 MB/s	   60869 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     588	   2413523 ns/op	   6.80 MB/s	   60943 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     495	   2601469 ns/op	   6.31 MB/s	   60772 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     529	   2118755 ns/op	   7.75 MB/s	   60913 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     538	   2160720 ns/op	   7.59 MB/s	   60726 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     562	   2126790 ns/op	   7.72 MB/s	   60826 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     578	   2163113 ns/op	   7.59 MB/s	   60791 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=16KiB-12        	     568	   2128983 ns/op	   7.71 MB/s	   60905 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      70	  17000484 ns/op	   7.71 MB/s	  429616 B/op	      93 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      73	  16807253 ns/op	   7.80 MB/s	  431301 B/op	      95 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      73	  16692318 ns/op	   7.85 MB/s	  430733 B/op	      93 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      73	  20842183 ns/op	   6.29 MB/s	  430751 B/op	      95 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      52	  20335267 ns/op	   6.45 MB/s	  434331 B/op	      96 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      74	  18269630 ns/op	   7.18 MB/s	  431970 B/op	      94 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      68	  17090885 ns/op	   7.67 MB/s	  431923 B/op	      93 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      67	  17759212 ns/op	   7.38 MB/s	  428407 B/op	      94 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      72	  16983645 ns/op	   7.72 MB/s	  430651 B/op	      94 allocs/op
+BenchmarkTransactionBodySize/sanitize=false/body=128KiB-12       	      73	  18842545 ns/op	   6.96 MB/s	  430953 B/op	      94 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    6913	    144749 ns/op	   7.27 MB/s	    7813 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    8426	    148912 ns/op	   7.06 MB/s	    7769 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    8286	    143928 ns/op	   7.31 MB/s	    7785 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    8434	    144712 ns/op	   7.27 MB/s	    7802 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    8318	    143158 ns/op	   7.35 MB/s	    7803 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    7742	    145051 ns/op	   7.25 MB/s	    7774 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    7911	    143720 ns/op	   7.32 MB/s	    7816 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    8594	    146985 ns/op	   7.16 MB/s	    7788 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    8336	    145122 ns/op	   7.25 MB/s	    7807 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=1KiB-12          	    8520	    141791 ns/op	   7.42 MB/s	    7780 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     555	   2150968 ns/op	   7.63 MB/s	   60918 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     511	   2168800 ns/op	   7.57 MB/s	   60822 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     579	   2128367 ns/op	   7.71 MB/s	   60839 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     526	   2148688 ns/op	   7.64 MB/s	   61304 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     568	   2178367 ns/op	   7.53 MB/s	   60781 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     580	   2187097 ns/op	   7.50 MB/s	   60687 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     544	   2213913 ns/op	   7.41 MB/s	   60650 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     585	   2240772 ns/op	   7.32 MB/s	   61110 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     506	   2242675 ns/op	   7.32 MB/s	   60966 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=16KiB-12         	     552	   2305484 ns/op	   7.12 MB/s	   60521 B/op	      90 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      73	  16704904 ns/op	   7.85 MB/s	  429420 B/op	      94 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      74	  17348067 ns/op	   7.56 MB/s	  432996 B/op	      95 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      72	  17423011 ns/op	   7.52 MB/s	  433713 B/op	      94 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      64	  17033160 ns/op	   7.70 MB/s	  431098 B/op	      95 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      73	  17125599 ns/op	   7.65 MB/s	  432842 B/op	      96 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      69	  16316089 ns/op	   8.03 MB/s	  431675 B/op	      95 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      74	  17253695 ns/op	   7.60 MB/s	  431679 B/op	      97 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      73	  16785407 ns/op	   7.81 MB/s	  431213 B/op	      95 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      74	  16890728 ns/op	   7.76 MB/s	  430622 B/op	      93 allocs/op
+BenchmarkTransactionBodySize/sanitize=true/body=128KiB-12        	      74	  16725626 ns/op	   7.84 MB/s	  432495 B/op	      95 allocs/op
+PASS
+ok  	github.com/tilsor/ModSecIntl_wace_lib	442.245s
+PASS
+ok  	github.com/tilsor/ModSecIntl_wace_lib/configstore	0.004s
+PASS
+ok  	github.com/tilsor/ModSecIntl_wace_lib/pluginmanager	0.007s
+?   	github.com/tilsor/ModSecIntl_wace_lib/waceapi	[no test files]

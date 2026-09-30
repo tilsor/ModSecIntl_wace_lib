@@ -37,38 +37,23 @@ decision_plugins:
       csfd: "kfoskdofnno"
 `)
 
-func initialize(configuration []byte) error {
-	cs, err := Get()
-	if err != nil {
-		return err
-	}
+// initialize publishes the given configuration and returns the
+// resulting snapshot.
+func initialize(configuration []byte) (*ConfigStore, error) {
 	var aux ConfigFileData
-	err = yaml.Unmarshal(configuration, &aux)
-	if err != nil {
-		return err
+	if err := yaml.Unmarshal(configuration, &aux); err != nil {
+		return nil, err
 	}
-	err = cs.SetConfig(aux)
-	if err != nil {
-		return err
-	}
-	return nil
+	return SetConfig(aux)
 }
 
 func TestLoadConfigYamlEmpty(t *testing.T) {
-	_, err := New()
-	if err != nil {
-		t.Error(err)
-	}
-
 	defer Clean()
 
 	// a configuration without plugins is valid
-	if err := initialize([]byte(`---`)); err != nil {
-		t.Fatalf("empty config returned error: %v", err)
-	}
-	cs, err := Get()
+	cs, err := initialize([]byte(`---`))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("empty config returned error: %v", err)
 	}
 	if len(cs.ModelPlugins) != 0 || len(cs.DecisionPlugins) != 0 {
 		t.Errorf("empty config loaded plugins: %v %v", cs.ModelPlugins, cs.DecisionPlugins)
@@ -76,28 +61,18 @@ func TestLoadConfigYamlEmpty(t *testing.T) {
 }
 
 func TestLoadConfigYamlValid(t *testing.T) {
-	_, err := New()
-	if err != nil {
-		t.Error(err)
-	}
-
 	defer Clean()
 
-	err = initialize(validConfig)
+	_, err := initialize(validConfig)
 	if err != nil {
 		t.Errorf("valid config returned error: %v", err)
 	}
 }
 
 func TestLoadConfigYamlInvalid(t *testing.T) {
-	_, err := New()
-	if err != nil {
-		t.Error(err)
-	}
-
 	defer Clean()
 
-	err = initialize([]byte(`()=)(/&/()~@#~½¬{[{½¬½---sfdjlskjfs#@~sjdfa`))
+	_, err := initialize([]byte(`()=)(/&/()~@#~½¬{[{½¬½---sfdjlskjfs#@~sjdfa`))
 
 	if err == nil {
 		t.Error("invalid config does not return error")
@@ -108,14 +83,11 @@ func TestLoadConfigYamlInvalid(t *testing.T) {
 // written for the old logging package still load: logpath and loglevel
 // are ignored, whatever their value.
 func TestLoadConfigYamlIgnoresLegacyLogKeys(t *testing.T) {
-	_, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer Clean()
 
 	config := "---\nlogpath: /usr/not_writable.log\nloglevel: INVALIDLOGLEVEL\n"
-	if err := initialize([]byte(config)); err != nil {
+	_, err := initialize([]byte(config))
+	if err != nil {
 		t.Errorf("config with legacy log keys returned error: %v", err)
 	}
 }
@@ -259,13 +231,9 @@ model_plugins:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
-			err = initialize([]byte(tt.config))
+			cs, err := initialize([]byte(tt.config))
 			if (err != nil) != tt.wantErr {
 				if tt.wantErr {
 					t.Errorf("expected error but got none")
@@ -283,18 +251,18 @@ model_plugins:
 	}
 }
 
-func TestNewGetCleanLifecycle(t *testing.T) {
-	cs1, err := New()
+func TestSetConfigGetCleanLifecycle(t *testing.T) {
+	cs1, err := initialize(validConfig)
 	if err != nil {
-		t.Fatalf("New() failed: %v", err)
+		t.Fatalf("SetConfig failed: %v", err)
 	}
 
 	cs2, err := Get()
 	if err != nil {
-		t.Fatalf("Get() after New() failed: %v", err)
+		t.Fatalf("Get() after SetConfig() failed: %v", err)
 	}
 	if cs1 != cs2 {
-		t.Errorf("Get() returned a different instance than New()")
+		t.Errorf("Get() returned a different instance than SetConfig()")
 	}
 
 	Clean()
@@ -305,16 +273,90 @@ func TestNewGetCleanLifecycle(t *testing.T) {
 	}
 }
 
-func TestNewDuplicate(t *testing.T) {
-	_, err := New()
-	if err != nil {
-		t.Fatalf("first New() failed: %v", err)
-	}
+// TestSetConfigPublishesNewSnapshot checks that SetConfig publishes a new
+// ConfigStore instead of modifying the current one, so whoever holds the
+// previous snapshot keeps a consistent view.
+func TestSetConfigPublishesNewSnapshot(t *testing.T) {
 	defer Clean()
+	old, err := initialize(validConfig)
+	if err != nil {
+		t.Fatalf("first SetConfig: %v", err)
+	}
+	oldModels := len(old.ModelPlugins)
 
-	_, err = New()
-	if err == nil {
-		t.Errorf("second New() should return error when instance already exists")
+	cur, err := initialize([]byte(`---`))
+	if err != nil {
+		t.Fatalf("second SetConfig: %v", err)
+	}
+	if cur == old {
+		t.Fatal("SetConfig reused the previous snapshot")
+	}
+	if len(old.ModelPlugins) != oldModels {
+		t.Errorf("previous snapshot changed: %d model plugins, want %d", len(old.ModelPlugins), oldModels)
+	}
+	if got, _ := Get(); got != cur {
+		t.Error("Get() does not return the last published snapshot")
+	}
+}
+
+// TestSetConfigInvalidKeepsPrevious checks that a rejected configuration
+// does not replace the published one.
+func TestSetConfigInvalidKeepsPrevious(t *testing.T) {
+	defer Clean()
+	prev, err := initialize(validConfig)
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	for name, conf := range map[string]string{
+		"invalid path": "---\nmodel_plugins:\n  - id: \"missing\"\n    path: \"../testdata/plugins/model/does_not_exist.so\"\n    plugin_type: \"Everything\"\n",
+		"invalid type": "---\nmodel_plugins:\n  - id: \"bad\"\n    path: \"../testdata/plugins/model/trivial.so\"\n    plugin_type: \"NotAType\"\n",
+	} {
+		if _, err := initialize([]byte(conf)); err == nil {
+			t.Errorf("%s: SetConfig should return error", name)
+		}
+		if got, _ := Get(); got != prev {
+			t.Errorf("%s: rejected SetConfig replaced the published config", name)
+		}
+	}
+}
+
+// TestSetConfigDoesNotAliasInput checks that the published snapshot does
+// not share maps or slices with the ConfigFileData passed to SetConfig.
+func TestSetConfigDoesNotAliasInput(t *testing.T) {
+	defer Clean()
+	in := ConfigFileData{
+		ModelPlugins: []configFileModelPlugin{{
+			ID: "m", Path: "../testdata/plugins/model/trivial.so", PluginType: "Everything",
+			Params: map[string]string{"k": "v"},
+		}},
+		DecisionPlugins: []configFileDecisionPlugin{{
+			ID: "d", Path: "../testdata/plugins/decision/simple.so",
+			Params:       map[string]string{"k": "v"},
+			ModelWeights: map[string]float64{"m": 1},
+		}},
+		CredentialHeaders: []string{"x-token"},
+	}
+	cs, err := SetConfig(in)
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+
+	in.ModelPlugins[0].Params["k"] = "changed"
+	in.DecisionPlugins[0].Params["k"] = "changed"
+	in.DecisionPlugins[0].ModelWeights["m"] = 2
+	in.CredentialHeaders[0] = "changed"
+
+	if got := cs.ModelPlugins["m"].Params["k"]; got != "v" {
+		t.Errorf("model Params aliased: got %q", got)
+	}
+	if got := cs.DecisionPlugins["d"].Params["k"]; got != "v" {
+		t.Errorf("decision Params aliased: got %q", got)
+	}
+	if got := cs.DecisionPlugins["d"].ModelWeights["m"]; got != 1 {
+		t.Errorf("ModelWeights aliased: got %v", got)
+	}
+	if got := cs.CredentialHeaders[0]; got != "x-token" {
+		t.Errorf("CredentialHeaders aliased: got %q", got)
 	}
 }
 
@@ -390,10 +432,6 @@ func TestIsAsync(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
 			config := fmt.Sprintf(`---
@@ -403,7 +441,8 @@ model_plugins:
     plugin_type: "RequestHeaders"
     async: %v
 `, tt.async)
-			if err := initialize([]byte(config)); err != nil {
+			cs, err := initialize([]byte(config))
+			if err != nil {
 				t.Fatalf("initialize failed: %v", err)
 			}
 
@@ -414,13 +453,13 @@ model_plugins:
 	}
 }
 
-func TestGetBeforeNew(t *testing.T) {
+func TestGetBeforeSetConfig(t *testing.T) {
 	// ensure clean state
 	Clean()
 
 	_, err := Get()
 	if err == nil {
-		t.Error("Get() before New() should return error")
+		t.Error("Get() before SetConfig() should return error")
 	}
 }
 
@@ -436,10 +475,6 @@ func TestIsInTraining(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
 			trainingSection := ""
@@ -453,7 +488,8 @@ model_plugins:
     plugin_type: "RequestHeaders"
     training: %v%s
 `, tt.training, trainingSection)
-			if err := initialize([]byte(config)); err != nil {
+			cs, err := initialize([]byte(config))
+			if err != nil {
 				t.Fatalf("initialize failed: %v", err)
 			}
 
@@ -531,13 +567,9 @@ model_plugins:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
-			err = initialize([]byte(tt.config))
+			cs, err := initialize([]byte(tt.config))
 			if (err != nil) != tt.wantErr {
 				if tt.wantErr {
 					t.Errorf("expected error but got none")
@@ -574,10 +606,6 @@ func TestTrainingDataStatusUpdateInterval(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
 			intervalLine := ""
@@ -594,7 +622,8 @@ model_plugins:
       max_samples: %d%s
 `, tc.maxSamples, intervalLine)
 
-			if err := initialize([]byte(config)); err != nil {
+			cs, err := initialize([]byte(config))
+			if err != nil {
 				t.Fatalf("initialize: %v", err)
 			}
 
@@ -618,10 +647,6 @@ func TestShouldSanitize(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
 			config := fmt.Sprintf(`---
@@ -631,7 +656,8 @@ model_plugins:
     plugin_type: "RequestHeaders"
     sanitize: %v
 `, tt.sanitize)
-			if err := initialize([]byte(config)); err != nil {
+			cs, err := initialize([]byte(config))
+			if err != nil {
 				t.Fatalf("initialize: %v", err)
 			}
 
@@ -643,13 +669,10 @@ model_plugins:
 }
 
 func TestShouldSanitizeUnknownModel(t *testing.T) {
-	cs, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer Clean()
 
-	if err := initialize(validConfig); err != nil {
+	cs, err := initialize(validConfig)
+	if err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
 
@@ -683,13 +706,10 @@ credential_headers:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
-			if err := initialize([]byte(tt.config)); err != nil {
+			cs, err := initialize([]byte(tt.config))
+			if err != nil {
 				t.Fatalf("initialize: %v", err)
 			}
 
@@ -723,13 +743,10 @@ natsurl: "nats.example.com:4222"
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
-			if err := initialize([]byte(tt.config)); err != nil {
+			cs, err := initialize([]byte(tt.config))
+			if err != nil {
 				t.Fatalf("initialize failed: %v", err)
 			}
 
@@ -756,14 +773,10 @@ func TestModelTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
 			config := "---\n" + tt.timeout
-			err = initialize([]byte(config))
+			cs, err := initialize([]byte(config))
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got ModelTimeout = %v", cs.ModelTimeout)
@@ -797,14 +810,10 @@ func TestAsyncModelTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cs, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer Clean()
 
 			config := "---\n" + tt.timeout
-			err = initialize([]byte(config))
+			cs, err := initialize([]byte(config))
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got AsyncModelTimeout = %v", cs.AsyncModelTimeout)
@@ -839,10 +848,6 @@ func TestPluginTimeout(t *testing.T) {
 	for _, tt := range tests {
 		for _, kind := range []string{"model", "decision"} {
 			t.Run(kind+"/"+tt.name, func(t *testing.T) {
-				cs, err := New()
-				if err != nil {
-					t.Fatal(err)
-				}
 				defer Clean()
 
 				config := "---\nmodel_plugins:\n  - id: \"trivial\"\n    path: \"../testdata/plugins/model/trivial.so\"\n    plugin_type: \"Everything\"\n"
@@ -854,7 +859,7 @@ func TestPluginTimeout(t *testing.T) {
 					config += tt.timeout
 				}
 
-				err = initialize([]byte(config))
+				cs, err := initialize([]byte(config))
 				if tt.wantErr {
 					if err == nil {
 						t.Fatal("expected error, got nil")

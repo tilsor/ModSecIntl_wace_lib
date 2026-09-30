@@ -138,17 +138,13 @@ func setupPluginManager(t *testing.T, configuration []byte) *PluginManager {
 func setupPluginManagerWithLogger(t *testing.T, configuration []byte, logger *slog.Logger) *PluginManager {
 	t.Helper()
 	configstore.Clean()
-	cs, err := configstore.New()
-	if err != nil {
-		t.Fatalf("configstore.New() failed: %v", err)
-	}
 	t.Cleanup(configstore.Clean)
 
 	var aux configstore.ConfigFileData
 	if err := yaml.Unmarshal(configuration, &aux); err != nil {
 		t.Fatalf("yaml.Unmarshal failed: %v", err)
 	}
-	if err := cs.SetConfig(aux); err != nil {
+	if _, err := configstore.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig failed: %v", err)
 	}
 	pm, err := New(testMeter, logger)
@@ -623,15 +619,11 @@ func TestPluginManagerReloadChangesOutput(t *testing.T) {
     params:
       result: "0.8"
 `
-	cs, err := configstore.Get()
-	if err != nil {
-		t.Fatalf("configstore.Get: %v", err)
-	}
 	var aux configstore.ConfigFileData
 	if err := yaml.Unmarshal([]byte(updatedConfig), &aux); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if err := cs.SetConfig(aux); err != nil {
+	if _, err := configstore.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig with updated params: %v", err)
 	}
 
@@ -646,15 +638,11 @@ func TestPluginManagerReloadChangesOutput(t *testing.T) {
 // config, without touching the plugin manager.
 func applyConfig(t *testing.T, configuration string) {
 	t.Helper()
-	cs, err := configstore.Get()
-	if err != nil {
-		t.Fatalf("configstore.Get: %v", err)
-	}
 	var aux configstore.ConfigFileData
 	if err := yaml.Unmarshal([]byte(configuration), &aux); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if err := cs.SetConfig(aux); err != nil {
+	if _, err := configstore.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
 }
@@ -796,15 +784,11 @@ func TestPluginManagerProcessAsyncPlugin(t *testing.T) {
     plugin_type: "Everything"
     async: true
 `
-	cs, err := configstore.Get()
-	if err != nil {
-		t.Fatalf("configstore.Get: %v", err)
-	}
 	var aux configstore.ConfigFileData
 	if err := yaml.Unmarshal([]byte(asyncConf), &aux); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if err := cs.SetConfig(aux); err != nil {
+	if _, err := configstore.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
 
@@ -950,15 +934,11 @@ func TestPluginManagerTrainingReloadDisablesTraining(t *testing.T) {
     path: "../testdata/plugins/model/trivial.so"
     plugin_type: "Everything"
 `
-	cs, err := configstore.Get()
-	if err != nil {
-		t.Fatalf("configstore.Get: %v", err)
-	}
 	var aux configstore.ConfigFileData
 	if err := yaml.Unmarshal([]byte(disabledConfig), &aux); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if err := cs.SetConfig(aux); err != nil {
+	if _, err := configstore.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
 	if err := pm.Reload(testMeter, discardLogger); err != nil {
@@ -1203,15 +1183,11 @@ func TestPluginManagerDecisionTrainingReloadDisables(t *testing.T) {
   - id: "simple_training"
     path: "../testdata/plugins/decision/simple.so"
 `
-	cs, err := configstore.Get()
-	if err != nil {
-		t.Fatalf("configstore.Get: %v", err)
-	}
 	var aux configstore.ConfigFileData
 	if err := yaml.Unmarshal([]byte(disabledConfig), &aux); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if err := cs.SetConfig(aux); err != nil {
+	if _, err := configstore.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
 	if err := pm.Reload(testMeter, discardLogger); err != nil {
@@ -1487,9 +1463,10 @@ func TestPluginManagerConcurrentReloadAndRequests(t *testing.T) {
 	config := baseConfig + "model_plugins:\n" + trivialPlugin + paramPlugin + "decision_plugins:\n" + simplePlugin + testPlugin
 	pm := setupPluginManager(t, []byte(config))
 
-	// The configstore is not safe for concurrent SetConfig, so the new config
-	// is applied before the request goroutines start. The first Reload below
-	// then adds trivial2 and removes param and test while requests are running.
+	// The new config is published before the request goroutines start, so
+	// what they race with is the plugin maps being reloaded. The first
+	// Reload below then adds trivial2 and removes param and test while
+	// requests are running.
 	applyConfig(t, baseConfig+"model_plugins:\n"+trivialPlugin+trivial2Plugin+"decision_plugins:\n"+simplePlugin)
 
 	const workers = 4

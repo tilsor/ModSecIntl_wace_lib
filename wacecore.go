@@ -337,14 +337,17 @@ func Reload(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) e
 		l = slog.Default()
 	}
 
-	cs, err := configstore.Get()
+	_, err := configstore.Get()
 	if err != nil {
 		return err
 	}
-	if err = cs.SetConfig(conf); err != nil {
+
+	cs, err := configstore.SetConfig(conf)
+	if err != nil {
 		return err
 	}
 	setLogger(l)
+
 	if len(cs.CredentialHeaders) != 0 {
 		setCredentialHeaders(cs.CredentialHeaders)
 	}
@@ -361,12 +364,11 @@ func Init(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) err
 	setLogger(l)
 	logger := coreLogger.Load()
 
-	cs, err := configstore.New()
-	if err != nil {
-		return err
+	if _, err := configstore.Get(); err == nil {
+		return fmt.Errorf("wace: already initialized")
 	}
 
-	err = cs.SetConfig(conf)
+	cs, err := configstore.SetConfig(conf)
 	if err != nil {
 		return err
 	}

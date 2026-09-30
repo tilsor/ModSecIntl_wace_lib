@@ -7,7 +7,10 @@ package configstore
 
 import (
 	"fmt"
+	"maps"
 	"os"
+	"slices"
+	"sync/atomic"
 	"time"
 )
 
@@ -120,28 +123,19 @@ const DefaultModelTimeout = 200 * time.Millisecond
 // in the config file
 const DefaultAsyncModelTimeout = 60 * time.Second
 
-var config *ConfigStore
-
-// Create and returns the unique instance of configstore if it does not exist previously, in other case returns error
-func New() (*ConfigStore, error) {
-	if config != nil {
-		return nil, fmt.Errorf("ConfigStore: an instance already exists")
-	}
-	config = new(ConfigStore)
-	return config, nil
-}
+var config atomic.Pointer[ConfigStore]
 
 // Get returns the unique instance of configstore
 func Get() (*ConfigStore, error) {
-	if config == nil {
+	if config.Load() == nil {
 		return nil, fmt.Errorf("ConfigStore: Configuration was not loaded")
 	}
-	return config, nil
+	return config.Load(), nil
 }
 
 // Clean remove the references to the stored instance of configstore
 func Clean() {
-	config = nil
+	config.Store(nil)
 }
 
 type configFileModelPlugin struct {
@@ -262,18 +256,20 @@ func checkConfig(inConf ConfigFileData) error {
 }
 
 // SetConfig sets the configuration of WACE from the configuration file
-func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
+func SetConfig(inConf ConfigFileData) (*ConfigStore, error) {
 	err := checkConfig(inConf)
 	if err != nil {
-		return err
+		return nil, err
 	}
+
+	cs := new(ConfigStore)
 
 	cs.ModelPlugins = make(map[string]modelPluginConfig)
 	for _, modelP := range inConf.ModelPlugins {
 		var modelConfig modelPluginConfig
 		modelConfig.ID = modelP.ID
 		modelConfig.Path = modelP.Path
-		modelConfig.Params = modelP.Params
+		modelConfig.Params = maps.Clone(modelP.Params)
 		modelConfig.PluginType, err = StringToPluginType(modelP.PluginType)
 		modelConfig.async = modelP.Async
 		modelConfig.remote = modelP.Remote
@@ -285,7 +281,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		modelConfig.sanitize = modelP.Sanitize
 		modelConfig.Timeout = modelP.Timeout
 		if err != nil {
-			return err
+			return nil, err
 		}
 		cs.ModelPlugins[modelConfig.ID] = modelConfig
 	}
@@ -295,13 +291,13 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		var decisionConfig decisionPluginConfig
 		decisionConfig.ID = decisionP.ID
 		decisionConfig.Path = decisionP.Path
-		decisionConfig.Params = decisionP.Params
+		decisionConfig.Params = maps.Clone(decisionP.Params)
 		decisionConfig.Training = decisionP.Training
 		decisionConfig.TrainingData = decisionP.TrainingData
 		if decisionConfig.TrainingData.StatusUpdateInterval == 0 {
 			decisionConfig.TrainingData.StatusUpdateInterval = max(1, decisionConfig.TrainingData.MaxSamples/10)
 		}
-		decisionConfig.ModelWeights = decisionP.ModelWeights
+		decisionConfig.ModelWeights = maps.Clone(decisionP.ModelWeights)
 		decisionConfig.WAFWeight = decisionP.WAFWeight
 		decisionConfig.Timeout = decisionP.Timeout
 		cs.DecisionPlugins[decisionConfig.ID] = decisionConfig
@@ -309,7 +305,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 
 	cs.NatsURL = inConf.NatsURL
 
-	cs.CredentialHeaders = inConf.CredentialHeaders
+	cs.CredentialHeaders = slices.Clone(inConf.CredentialHeaders)
 
 	cs.ModelTimeout = DefaultModelTimeout
 	if inConf.ModelTimeout != nil {
@@ -320,5 +316,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		cs.AsyncModelTimeout = *inConf.AsyncModelTimeout
 	}
 
-	return nil
+	config.Store(cs)
+
+	return cs, nil
 }
