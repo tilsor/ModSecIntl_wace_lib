@@ -4,31 +4,35 @@
 package main
 
 import (
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
+	"context"
+	"log/slog"
+	"sync/atomic"
+
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
-	"go.opentelemetry.io/otel/metric"
 )
 
-type testDecision struct{}
+type testDecision struct {
+	logger atomic.Pointer[slog.Logger]
+}
 
 // NewPlugin intitalizes the plugin (does nothing in this case)
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
-	logger := lg.Get()
-	logger.Printf(lg.WARN, "[test:NewPlugin] %v\n", params)
-	return &testDecision{}, nil
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.DecisionPlugin, error) {
+	cfg.Logger.Warn("NewPlugin", "params", cfg.Params)
+	d := &testDecision{}
+	d.logger.Store(cfg.Logger)
+	return d, nil
 }
 
 // CheckResults returns true (block traffic) if WAF says so, and false
 // in other case.
-func (d *testDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
-	logger := lg.Get()
-
+func (d *testDecision) CheckResults(ctx context.Context, decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	modelRes := decisionInput.Results
 	modelWeight := decisionInput.ModelWeight
 	wafData := decisionInput.WAFdata
 	transactionID := decisionInput.TransactionId
 
-	logger.TPrintf(lg.WARN, transactionID, "[test:CheckResults]\n  modelRes: %v\n  modelWeight: %v\n  wafData: %v\n", modelRes, modelWeight, wafData)
+	d.logger.Load().Warn("CheckResults", waceapi.LogKeyTxID, transactionID,
+		"model_results", modelRes, "model_weights", modelWeight, "waf_data", wafData)
 
 	if len(wafData.Scores) != 0 {
 		as := wafData.Scores["anomalyscore"]
@@ -41,7 +45,8 @@ func (d *testDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceap
 }
 
 // Reload reloads the plugin (does nothing in this case)
-func (d *testDecision) Reload(params map[string]string, meter metric.Meter) error {
+func (d *testDecision) Reload(cfg waceapi.PluginConfig) error {
+	d.logger.Store(cfg.Logger)
 	return nil
 }
 

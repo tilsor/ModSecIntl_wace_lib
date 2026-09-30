@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
-	"github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 )
@@ -35,11 +35,23 @@ const (
 func (t pluginKind) String() string {
 	switch t {
 	case modelKind:
-		return "Model"
+		return "model"
 	case decisionKind:
-		return "Decision"
+		return "decision"
 	default:
-		return "Unknown"
+		return "unknown"
+	}
+}
+
+// logValue returns the plugin type value used in log attributes
+func (t pluginKind) logValue() string {
+	switch t {
+	case modelKind:
+		return waceapi.LogValueModelPluginType
+	case decisionKind:
+		return waceapi.LogValueDecisionPluginType
+	default:
+		return "unknown"
 	}
 }
 
@@ -142,18 +154,27 @@ func writeStatus(status TrainingStatus, filePath string) error {
 
 func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, ctx context.Context, cancel context.CancelFunc, tc chan any, kind pluginKind) {
 	defer cancel()
-	logger := logging.Get()
-	logger.Printf(logging.INFO, "%s %s | Handling training data\n", kind, ID)
+	// Collection can outlive a logger change, so the logger is checked on
+	// every record. It is derived again only when it changed, because With
+	// allocates even when the level is disabled.
+	var base, current *slog.Logger
+	logger := func() *slog.Logger {
+		if l := p.getLogger(); l != base {
+			base, current = l, l.With(waceapi.LogKeyPluginType, kind.logValue(), waceapi.LogKeyPlugin, ID)
+		}
+		return current
+	}
+	logger().Info("handling training data")
 
 	// Check existing status file before doing any work.
 	createdAt := time.Now()
 	existing, err := loadStatus(td.StatusFilePath)
 	if err != nil {
-		logger.Printf(logging.ERROR, "%s %s | Error loading status file: %s", kind, ID, err.Error())
+		logger().Error("cannot load training status file", "path", td.StatusFilePath, "error", err)
 	}
 	if existing != nil {
 		if existing.Status == Done || existing.Status == Error {
-			logger.Printf(logging.INFO, "%s %s | Training already %s, skipping collection\n", kind, ID, existing.Status)
+			logger().Info("training already finished, skipping collection", "training.status", existing.Status)
 			return
 		}
 		createdAt = existing.CreatedAt
@@ -161,7 +182,7 @@ func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, c
 
 	f, err := os.OpenFile(td.ResultFilePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		logger.Printf(logging.ERROR, "%s %s | Error handling data: %s", kind, ID, err.Error())
+		logger().Error("cannot open training result file", "path", td.ResultFilePath, "error", err)
 		return
 	}
 	defer f.Close()
@@ -173,7 +194,7 @@ func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, c
 		collectedSamples++
 	}
 	if err := scanner.Err(); err != nil {
-		logger.Printf(logging.ERROR, "%s %s | Error handling data: %s", kind, ID, err.Error())
+		logger().Error("cannot read training result file", "path", td.ResultFilePath, "error", err)
 		return
 	}
 
@@ -187,34 +208,34 @@ func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, c
 	}
 
 	if collectedSamples >= td.MaxSamples {
-		logger.Printf(logging.INFO, "%s %s | The maximum number of samples has already been written.\n", kind, ID)
+		logger().Info("maximum number of samples already written", "samples.collected", collectedSamples, "samples.max", td.MaxSamples)
 		status.Status = Done
 		if err := writeStatus(status, td.StatusFilePath); err != nil {
-			logger.Printf(logging.ERROR, "%s %s | Error writing status: %s", kind, ID, err.Error())
+			logger().Error("cannot write training status", "path", td.StatusFilePath, "error", err)
 		}
 		return
 	}
 
-	logger.Printf(logging.INFO, "%s %s | Previously amount of samples written %d\n", kind, ID, collectedSamples)
+	logger().Info("previously written samples", "samples.collected", collectedSamples)
 	if collectedSamples >= td.MinSamples {
 		status.Status = Ready
 	} else {
 		status.Status = Collecting
 	}
 	if err := writeStatus(status, td.StatusFilePath); err != nil {
-		logger.Printf(logging.ERROR, "%s %s | Error writing status: %s", kind, ID, err.Error())
+		logger().Error("cannot write training status", "path", td.StatusFilePath, "error", err)
 	}
 
 	for collectedSamples < td.MaxSamples {
 		select {
 		case data := <-tc:
-			logger.Printf(logging.DEBUG, "%s %s | Recieved data %v", kind, ID, data)
+			logger().Debug("received training data", "data", data)
 			if err := encoder.Encode(data); err != nil {
-				logger.Printf(logging.ERROR, "%s %s | Error writing data: %s", kind, ID, err.Error())
+				logger().Error("cannot write training data", "path", td.ResultFilePath, "error", err)
 				status.Status = Error
 				status.ErrorMsg = err.Error()
 				if err := writeStatus(status, td.StatusFilePath); err != nil {
-					logger.Printf(logging.ERROR, "%s %s | Error writing status: %s", kind, ID, err.Error())
+					logger().Error("cannot write training status", "path", td.StatusFilePath, "error", err)
 				}
 				return
 			}
@@ -228,44 +249,48 @@ func (p *PluginManager) handleTraining(ID string, td configstore.TrainingData, c
 			}
 			if collectedSamples == td.MinSamples || collectedSamples == td.MaxSamples || (td.StatusUpdateInterval > 0 && collectedSamples%td.StatusUpdateInterval == 0) {
 				if err := writeStatus(status, td.StatusFilePath); err != nil {
-					logger.Printf(logging.ERROR, "%s %s | Error writing status: %s", kind, ID, err.Error())
+					logger().Error("cannot write training status", "path", td.StatusFilePath, "error", err)
 				}
 			}
 		case <-ctx.Done():
-			logger.Printf(logging.DEBUG, "%s %s | Training cancelled\n", kind, ID)
+			logger().Debug("training cancelled")
 			return
 		}
 	}
 
-	logger.Printf(logging.INFO, "%s %s | Data collection for training completed.\n", kind, ID)
+	logger().Info("training data collection completed")
 }
 
 // ProcessTraining is in charge of calling the model plugin with id modelID
 func (p *PluginManager) ProcessTraining(modelID, transactionID string, payload waceapi.HTTPPayload, t configstore.ModelPluginType) {
-	logger := logging.Get()
+	logger := p.getLogger().With(waceapi.LogKeyTxID, transactionID,
+		waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
+		waceapi.LogKeyPlugin, modelID)
 
 	p.modelMutex.RLock()
 	mp, exists := p.modelPlugins[modelID]
 	p.modelMutex.RUnlock()
 	if !exists {
-		logger.TPrintf(logging.ERROR, transactionID, "Model %s not found", modelID)
+		logger.Error("plugin not found")
 		return
 	}
 
 	if mp.trainingCtx == nil {
-		logger.TPrintf(logging.DEBUG, transactionID, "training not started for model %s, dropping request", modelID)
+		logger.Debug("training not started, dropping request")
 		return
 	}
 
-	res, err := p.modelProcess(modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload, Training: true}, t)
+	// TODO: receive the context from Analyze; the training result is
+	// collected after the request, so it must not be cancelled with it
+	res, err := p.modelProcess(context.TODO(), modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload, Training: true}, t)
 	if err != nil {
-		logger.TPrintf(logging.ERROR, transactionID, "Error processing model %s: %s", modelID, err.Error())
+		logger.Error("cannot process training request", "error", err)
 		return
 	}
 
 	select {
 	case mp.trainingChannel <- res:
 	case <-mp.trainingCtx.Done():
-		logger.TPrintf(logging.DEBUG, transactionID, "training cancelled for model %s, dropping result", modelID)
+		logger.Debug("training cancelled, dropping result")
 	}
 }

@@ -1,6 +1,20 @@
 package waceapi
 
-import "go.opentelemetry.io/otel/metric"
+import (
+	"context"
+	"log/slog"
+
+	"go.opentelemetry.io/otel/metric"
+)
+
+const (
+	LogKeyTxID                 = "tx_id"
+	LogKeyComponent            = "component"
+	LogKeyPlugin               = "plugin.id"
+	LogKeyPluginType           = "plugin.type"
+	LogValueModelPluginType    = "model"
+	LogValueDecisionPluginType = "decision"
+)
 
 type HTTPHeader struct {
 	Key   string
@@ -51,14 +65,28 @@ type WAFData struct {
 	Rules  map[int]int
 }
 
+// PluginConfig is what the plugin manager passes to NewPlugin and
+// Reload.
+type PluginConfig struct {
+	Params map[string]string
+	Meter  metric.Meter
+	// Logger already carries the component, plugin.type and plugin.id
+	// attributes; plugins must not add them again. It is never nil.
+	Logger *slog.Logger
+}
+
+// ModelPlugin is the instance returned by the NewPlugin function of a
+// model plugin.
 type ModelPlugin interface {
-	Process(ModelInput) (ModelResults, error)
-	Reload(params map[string]string, meter metric.Meter) error
+	Process(context.Context, ModelInput) (ModelResults, error)
+	Reload(PluginConfig) error
 	Clean() error
 }
 
+// DecisionPlugin is the instance returned by the NewPlugin function of
+// a decision plugin.
 type DecisionPlugin interface {
-	CheckResults(DecisionInput) (DecisionResult, error)
-	Reload(params map[string]string, meter metric.Meter) error
+	CheckResults(context.Context, DecisionInput) (DecisionResult, error)
+	Reload(PluginConfig) error
 	Clean() error
 }

@@ -5,8 +5,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sync/atomic"
 
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -14,20 +15,24 @@ import (
 
 const PLUGIN_NAME = "waf_only"
 
-type wafOnlyDecision struct{}
+type wafOnlyDecision struct {
+	logger atomic.Pointer[slog.Logger]
+}
 
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.DecisionPlugin, error) {
 	// Create counter for plugin register
 	ctx := context.Background()
-	pluginCounter, err := meter.Int64Counter("plugin_register")
+	pluginCounter, err := cfg.Meter.Int64Counter("plugin_register")
 	if err != nil {
 		return nil, err
 	}
 	pluginCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("plugin_name", PLUGIN_NAME), attribute.String("plugin_type", "decision")))
-	return &wafOnlyDecision{}, nil
+	d := &wafOnlyDecision{}
+	d.logger.Store(cfg.Logger)
+	return d, nil
 }
 
-func (d *wafOnlyDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+func (d *wafOnlyDecision) CheckResults(ctx context.Context, decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	as, ok := decisionInput.WAFdata.Scores["inbound_blocking"]
 	if !ok {
 		return waceapi.DecisionResult{}, fmt.Errorf("inbound_blocking score not found")
@@ -37,8 +42,8 @@ func (d *wafOnlyDecision) CheckResults(decisionInput waceapi.DecisionInput) (wac
 		return waceapi.DecisionResult{}, fmt.Errorf("inbound_threshold score not found")
 	}
 
-	logger := lg.Get()
-	logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "%s | anomaly score: %v anomaly score threshold: %v", PLUGIN_NAME, as, it)
+	d.logger.Load().Debug("WAF anomaly score", waceapi.LogKeyTxID, decisionInput.TransactionId,
+		"anomaly_score", as, "anomaly_score.threshold", it)
 	if decisionInput.Training {
 		return waceapi.DecisionResult{Block: as >= it, Data: decisionInput}, nil
 	} else {
@@ -47,7 +52,8 @@ func (d *wafOnlyDecision) CheckResults(decisionInput waceapi.DecisionInput) (wac
 }
 
 // Reload reloads the plugin (does nothing in this case)
-func (d *wafOnlyDecision) Reload(params map[string]string, meter metric.Meter) error {
+func (d *wafOnlyDecision) Reload(cfg waceapi.PluginConfig) error {
+	d.logger.Store(cfg.Logger)
 	return nil
 }
 

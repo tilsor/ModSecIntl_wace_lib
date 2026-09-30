@@ -5,22 +5,22 @@
 package main
 
 import (
+	"context"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
-	"go.opentelemetry.io/otel/metric"
 )
 
 type wrongInitModel struct{}
 
 // NewPlugin has the wrong return type
-func NewPlugin(params map[string]string, meter metric.Meter) (*wrongInitModel, error) {
+func NewPlugin(cfg waceapi.PluginConfig) (*wrongInitModel, error) {
 	return &wrongInitModel{}, nil
 }
 
-func (m *wrongInitModel) Process(input waceapi.ModelInput) (waceapi.ModelResults, error) {
+func (m *wrongInitModel) Process(ctx context.Context, input waceapi.ModelInput) (waceapi.ModelResults, error) {
 	return waceapi.ModelResults{ProbAttack: 0.0}, nil
 }
 
-func (m *wrongInitModel) Reload(params map[string]string, meter metric.Meter) error {
+func (m *wrongInitModel) Reload(cfg waceapi.PluginConfig) error {
 	return nil
 }
 

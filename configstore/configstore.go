@@ -8,8 +8,6 @@ package configstore
 import (
 	"fmt"
 	"os"
-
-	"github.com/tilsor/ModSecIntl_logging/logging"
 )
 
 // ModelPluginType is an enum listing the parts of a request or
@@ -103,8 +101,6 @@ type decisionPluginConfig struct {
 type ConfigStore struct {
 	ModelPlugins      map[string]modelPluginConfig
 	DecisionPlugins   map[string]decisionPluginConfig
-	LogPath           string
-	LogLevel          logging.LogLevel
 	NatsURL           string
 	ApplicationId     string
 	CredentialHeaders []string
@@ -157,8 +153,6 @@ type configFileDecisionPlugin struct {
 }
 
 type ConfigFileData struct {
-	Logpath           string
-	Loglevel          string
 	ModelPlugins      []configFileModelPlugin    `yaml:"model_plugins"`
 	DecisionPlugins   []configFileDecisionPlugin `yaml:"decision_plugins"`
 	NatsURL           string
@@ -189,32 +183,9 @@ func (c *ConfigStore) ShouldSanitize(modelID string) bool {
 	return c.ModelPlugins[modelID].sanitize
 }
 
-// CheckLogging verifies if the log path is valid
-func checkLogging(inConf ConfigFileData) error {
-	// check logpath
-	if inConf.Logpath == "" {
-		return fmt.Errorf("log path empty")
-	}
-	_, err := os.Stat(inConf.Logpath)
-	if err != nil { // check if log file does not exists already
-		// Attempt to create dummy file
-		var d []byte
-		err = os.WriteFile(inConf.Logpath, d, 0644)
-		if err == nil {
-			err = os.Remove(inConf.Logpath) // delete it
-		}
-	}
-	return err
-}
-
 // CheckConfig verifies if the configuration read from the config file
 // is correct.
 func checkConfig(inConf ConfigFileData) error {
-	err := checkLogging(inConf)
-	if err != nil {
-		return fmt.Errorf("invalid log path %s: %v", inConf.Logpath, err)
-	}
-
 	// check modelplugins
 	for _, modelP := range inConf.ModelPlugins {
 		if modelP.Path != "" {
@@ -260,12 +231,6 @@ func checkConfig(inConf ConfigFileData) error {
 // SetConfig sets the configuration of WACE from the configuration file
 func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 	err := checkConfig(inConf)
-	if err != nil {
-		return err
-	}
-
-	cs.LogPath = inConf.Logpath
-	cs.LogLevel, err = logging.StringToLogLevel(inConf.Loglevel)
 	if err != nil {
 		return err
 	}

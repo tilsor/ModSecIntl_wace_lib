@@ -5,6 +5,9 @@
 - **Repo context:** `ModSecIntl_wace_lib` (consumed by `wace-coraza`)
 - **Supersedes:** the "A distinct `.so` per trainable plugin" operational
   decision of [ADR 0001](0001-trainable-decision-plugins.md)
+- **Amended by:** [ADR 0003](0003-plugin-config-and-slog.md): `NewPlugin` and
+  `Reload` now receive a `waceapi.PluginConfig` instead of `(params, meter)`,
+  and `Process` / `CheckResults` receive a `context.Context`
 
 ## Context
 

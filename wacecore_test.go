@@ -2,6 +2,7 @@ package wace
 
 import (
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -79,8 +80,6 @@ var wholeResponse = waceapi.HTTPPayload{
 }
 
 var config = []byte(`---
-logpath: "/dev/null"
-loglevel: DEBUG
 model_plugins:
   - id: "trivial"
     path: "testdata/plugins/model/trivial.so"
@@ -105,9 +104,7 @@ decision_plugins:
 `)
 
 var configAllModels = []byte(`---
-logpath: "/dev/null"
 #The level of debug, the valid options are - ERRO, WARN, INFO, DEBUG
-loglevel: "WARN"
 
 #The model plugins configuration
 model_plugins:
@@ -145,9 +142,7 @@ decision_plugins:
 `)
 
 var configSyncNoRemote = []byte(`---
-logpath: "/dev/null"
 #The level of debug, the valid options are - ERRO, WARN, INFO, DEBUG
-loglevel: "WARN"
 
 #The model plugins configuration
 model_plugins:
@@ -172,9 +167,7 @@ decision_plugins:
 `)
 
 var configSyncRemote = []byte(`---
-logpath: "/dev/null"
 #The level of debug, the valid options are - ERRO, WARN, INFO, DEBUG
-loglevel: "WARN"
 
 #The model plugins configuration
 model_plugins:
@@ -197,9 +190,7 @@ decision_plugins:
 `)
 
 var configAsync = []byte(`---
-logpath: "/dev/null"
 #The level of debug, the valid options are - ERRO, WARN, INFO, DEBUG
-loglevel: "WARN"
 
 #The model plugins configuration
 model_plugins:
@@ -221,6 +212,7 @@ decision_plugins:
 
 var provider = metric.NewMeterProvider()
 var testMeter = provider.Meter("example-meter")
+var discardLogger = slog.New(slog.DiscardHandler)
 
 func initialize(configuration []byte) error {
 	var aux configstore.ConfigFileData
@@ -228,7 +220,7 @@ func initialize(configuration []byte) error {
 	if err != nil {
 		return err
 	}
-	err = Init(testMeter, aux)
+	err = Init(testMeter, aux, discardLogger)
 	if err != nil {
 		return err
 	}
@@ -403,8 +395,6 @@ func TestInitDuplicate(t *testing.T) {
 // referencing a nonexistent plugin path must cause Init to return an error.
 func TestInitInvalidConfig(t *testing.T) {
 	badConfig := []byte(`---
-logpath: "/dev/null"
-loglevel: "ERROR"
 model_plugins:
   - id: "missing"
     path: "testdata/plugins/model/does_not_exist.so"
@@ -414,7 +404,7 @@ model_plugins:
 	if err := yaml.Unmarshal(badConfig, &aux); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	err := Init(testMeter, aux)
+	err := Init(testMeter, aux, discardLogger)
 	configstore.Clean()
 	if err == nil {
 		t.Error("Init with nonexistent plugin path should return error")
@@ -612,8 +602,6 @@ func TestConcurrentTransactions(t *testing.T) {
 // configParamWith returns a YAML config using param.so with the given result value.
 func configParamWith(result string) []byte {
 	return []byte(`---
-logpath: "/dev/null"
-loglevel: "WARN"
 model_plugins:
   - id: "param"
     path: "testdata/plugins/model/param.so"
@@ -630,6 +618,38 @@ decision_plugins:
 
 // TestReload verifies that Reload succeeds and that transactions still work
 // correctly after it.
+// TestReloadInvalidConfigKeepsLogger checks that a rejected Reload does
+// not replace the logger.
+func TestReloadInvalidConfigKeepsLogger(t *testing.T) {
+	if err := initialize(configParamWith("0.3")); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	defer configstore.Clean()
+
+	var badConf configstore.ConfigFileData
+	if err := yaml.Unmarshal([]byte(`---
+model_plugins:
+  - id: "missing"
+    path: "testdata/plugins/model/does_not_exist.so"
+    plugin_type: "Everything"
+`), &badConf); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	before := coreLogger.Load()
+	var out strings.Builder
+	if err := Reload(testMeter, badConf, slog.New(slog.NewJSONHandler(&out, nil))); err == nil {
+		t.Fatal("Reload with nonexistent plugin path should return error")
+	}
+	if coreLogger.Load() != before {
+		t.Error("rejected Reload replaced the core logger")
+	}
+	// logged by the core: the transaction does not exist
+	CloseTransaction(generateRandomID())
+	if out.Len() != 0 {
+		t.Errorf("new logger received records after a rejected Reload:\n%s", out.String())
+	}
+}
+
 func TestReload(t *testing.T) {
 	if err := initialize(configParamWith("0.3")); err != nil {
 		t.Fatalf("initialize: %v", err)
@@ -640,7 +660,7 @@ func TestReload(t *testing.T) {
 	if err := yaml.Unmarshal(configParamWith("0.8"), &newConf); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if err := Reload(testMeter, newConf); err != nil {
+	if err := Reload(testMeter, newConf, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 

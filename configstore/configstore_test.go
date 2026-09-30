@@ -2,7 +2,6 @@ package configstore
 
 import (
 	"fmt"
-	"os"
 	"reflect"
 	"testing"
 
@@ -10,8 +9,6 @@ import (
 )
 
 var validConfig = []byte(`---
-logpath: "/dev/stderr"
-loglevel: "DEBUG"
 model_plugins:
   - id: "trivial"
     path: "../testdata/plugins/model/trivial.so"
@@ -64,9 +61,16 @@ func TestLoadConfigYamlEmpty(t *testing.T) {
 
 	defer Clean()
 
-	err = initialize([]byte(`---`))
-	if err == nil {
-		t.Error("empty config does not return error")
+	// a configuration without plugins is valid
+	if err := initialize([]byte(`---`)); err != nil {
+		t.Fatalf("empty config returned error: %v", err)
+	}
+	cs, err := Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs.ModelPlugins) != 0 || len(cs.DecisionPlugins) != 0 {
+		t.Errorf("empty config loaded plugins: %v %v", cs.ModelPlugins, cs.DecisionPlugins)
 	}
 }
 
@@ -99,38 +103,19 @@ func TestLoadConfigYamlInvalid(t *testing.T) {
 	}
 }
 
-func TestLoadConfigYamlLogLevel(t *testing.T) {
-	tests := []struct {
-		level   string
-		wantErr bool
-	}{
-		{"a", true},
-		{"4", true},
-		{"0", true},
-		{"DEBUG", false},
-		{"INFO", false},
-		{"WARN", false},
-		{"ERROR", false},
+// TestLoadConfigYamlIgnoresLegacyLogKeys checks that configuration files
+// written for the old logging package still load: logpath and loglevel
+// are ignored, whatever their value.
+func TestLoadConfigYamlIgnoresLegacyLogKeys(t *testing.T) {
+	_, err := New()
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer Clean()
 
-	for _, tt := range tests {
-		t.Run(tt.level, func(t *testing.T) {
-			_, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer Clean()
-
-			config := "---\nlogpath: \"/dev/null\"\nloglevel: " + tt.level
-			err = initialize([]byte(config))
-			if (err != nil) != tt.wantErr {
-				if tt.wantErr {
-					t.Errorf("log level %q should return error but did not", tt.level)
-				} else {
-					t.Errorf("log level %q returned unexpected error: %v", tt.level, err)
-				}
-			}
-		})
+	config := "---\nlogpath: /usr/not_writable.log\nloglevel: INVALIDLOGLEVEL\n"
+	if err := initialize([]byte(config)); err != nil {
+		t.Errorf("config with legacy log keys returned error: %v", err)
 	}
 }
 
@@ -144,8 +129,6 @@ func TestLoadConfigYamlPluginType(t *testing.T) {
 		{
 			name: "invalid plugin type",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -156,8 +139,6 @@ model_plugins:
 		{
 			name: "empty plugin type",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -168,8 +149,6 @@ model_plugins:
 		{
 			name: "nonexistent model plugin path",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/nonexistent.so"
@@ -180,8 +159,6 @@ model_plugins:
 		{
 			name: "empty model plugin path",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: ""
@@ -192,8 +169,6 @@ model_plugins:
 		{
 			name: "empty decision plugin path",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 decision_plugins:
   - id: "test"
     path: ""
@@ -203,8 +178,6 @@ decision_plugins:
 		{
 			name: "nonexistent decision plugin path",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 decision_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/decision/nonexistent.so"
@@ -214,8 +187,6 @@ decision_plugins:
 		{
 			name: "valid RequestHeaders",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -226,8 +197,6 @@ model_plugins:
 		{
 			name: "valid RequestBody",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -238,8 +207,6 @@ model_plugins:
 		{
 			name: "valid AllRequest",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -250,8 +217,6 @@ model_plugins:
 		{
 			name: "valid ResponseHeaders",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -262,8 +227,6 @@ model_plugins:
 		{
 			name: "valid ResponseBody",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -274,8 +237,6 @@ model_plugins:
 		{
 			name: "valid AllResponse",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -286,8 +247,6 @@ model_plugins:
 		{
 			name: "valid Everything",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -317,67 +276,6 @@ model_plugins:
 			if tt.wantType != "" {
 				if got := fmt.Sprint(cs.ModelPlugins["testplugin"].PluginType); got != tt.wantType {
 					t.Errorf("plugin type = %q, want %q", got, tt.wantType)
-				}
-			}
-		})
-	}
-}
-
-func TestInvalidLogging(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  string
-		cleanup func(t *testing.T)
-		wantErr bool
-	}{
-		{
-			name: "invalid log level",
-			config: `---
-loglevel: INVALIDLOGLEVEL
-logpath: /dev/null
-`,
-			wantErr: true,
-		},
-		{
-			name: "writable log path",
-			config: `---
-loglevel: ERROR
-logpath: ./configstore_test.log`,
-			cleanup: func(t *testing.T) {
-				if _, err := os.Stat("./configstore_test.log"); err == nil {
-					if err := os.Remove("./configstore_test.log"); err != nil {
-						t.Errorf("could not remove ./configstore_test.log")
-					}
-				}
-			},
-			wantErr: false,
-		},
-		{
-			name: "inaccessible log path",
-			config: `---
-loglevel: ERROR
-logpath: /usr/configstore_test.log`,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := New()
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer Clean()
-			if tt.cleanup != nil {
-				defer tt.cleanup(t)
-			}
-
-			err = initialize([]byte(tt.config))
-			if (err != nil) != tt.wantErr {
-				if tt.wantErr {
-					t.Errorf("expected error but got none")
-				} else {
-					t.Errorf("unexpected error: %v", err)
 				}
 			}
 		})
@@ -498,8 +396,6 @@ func TestIsAsync(t *testing.T) {
 			defer Clean()
 
 			config := fmt.Sprintf(`---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -550,8 +446,6 @@ func TestIsInTraining(t *testing.T) {
 				trainingSection = "\n    training_data:\n      max_samples: 10"
 			}
 			config := fmt.Sprintf(`---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -580,8 +474,6 @@ func TestTrainingDataConfig(t *testing.T) {
 		{
 			name: "training with zero max_samples returns error",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -593,8 +485,6 @@ model_plugins:
 		{
 			name: "training and async are mutually exclusive",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -609,8 +499,6 @@ model_plugins:
 		{
 			name: "training and remote are mutually exclusive",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -625,8 +513,6 @@ model_plugins:
 		{
 			name: "valid training config stores TrainingData correctly",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -698,8 +584,6 @@ func TestTrainingDataStatusUpdateInterval(t *testing.T) {
 				intervalLine = fmt.Sprintf("\n      status_update_interval: %d", tc.explicitInterval)
 			}
 			config := fmt.Sprintf(`---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -740,8 +624,6 @@ func TestShouldSanitize(t *testing.T) {
 			defer Clean()
 
 			config := fmt.Sprintf(`---
-loglevel: ERROR
-logpath: /dev/null
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -784,16 +666,12 @@ func TestCredentialHeaders(t *testing.T) {
 		{
 			name: "no credential_headers field defaults to nil",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 `,
 			wantHeaders: nil,
 		},
 		{
 			name: "credential_headers values are stored",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 credential_headers:
   - x-api-key
   - x-secret-token
@@ -830,16 +708,12 @@ func TestNatsURL(t *testing.T) {
 		{
 			name: "empty string when natsurl not set",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 `,
 			wantURL: "",
 		},
 		{
 			name: "stores custom URL",
 			config: `---
-loglevel: ERROR
-logpath: /dev/null
 natsurl: "nats.example.com:4222"
 `,
 			wantURL: "nats.example.com:4222",

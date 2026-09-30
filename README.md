@@ -43,8 +43,8 @@ The `wace` package exports the following functions:
 
 | Function | Description |
 |---|---|
-| `Init(meter, conf) error` | Initializes WACE with a configuration and an OpenTelemetry meter, and loads the plugins. Call it once, before anything else. |
-| `Reload(meter, conf) error` | Applies a new configuration: reloads the params of existing plugins, loads new ones, and unloads the ones that were removed. |
+| `Init(meter, conf, logger) error` | Initializes WACE with a configuration, an OpenTelemetry meter and a `*slog.Logger` (`nil` uses `slog.Default()`), and loads the plugins. Call it once, before anything else. |
+| `Reload(meter, conf, logger) error` | Applies a new configuration and logger (`nil` uses `slog.Default()`): reloads the params of existing plugins, loads new ones, and unloads the ones that were removed. |
 | `InitTransaction(id)` | Starts a transaction with the given identifier. Call it once per transaction. |
 | `Analyze(modelType, id, payload, models) error` | Runs the given model plugins on a part of the transaction. `modelType` is one of `RequestHeaders`, `RequestBody`, `AllRequest`, `ResponseHeaders`, `ResponseBody`, `AllResponse` or `Everything`. It returns immediately; the models run in the background. |
 | `CheckTransaction(id, decisionPlugins, wafData) (block, decided bool, err error)` | Waits for the sync models started so far and runs the given decision plugins. At most one of them may be a production plugin; the others must be in training. `block` is the verdict of the production plugin, and `decided` reports whether one was found. A call with only training plugins returns `block == false`. |
@@ -55,6 +55,14 @@ A transaction follows the order `InitTransaction` → `Analyze` →
 alternate several times within one transaction (for example, analyze and check
 the request, then analyze and check the response).
 
+WACE logs through the `*slog.Logger` given to `Init` and replaced by `Reload`;
+the host chooses the handler, the destination and the level. If `Reload`
+rejects the configuration, the logger is not replaced either. Pass a logger without a `component`
+attribute: WACE adds `component=core`, `component=pluginmanager` or
+`component=plugin` itself. Records about a plugin carry `plugin.type` and
+`plugin.id`, and records about a transaction carry `tx_id` (the keys are the
+`waceapi.LogKey*` constants).
+
 ### Example
 
 ```go
@@ -62,6 +70,7 @@ package main
 
 import (
 	"log"
+	"log/slog"
 	"os"
 
 	wace "github.com/tilsor/ModSecIntl_wace_lib"
@@ -82,7 +91,8 @@ func main() {
 	}
 
 	meter := noop.NewMeterProvider().Meter("wace")
-	if err := wace.Init(meter, conf); err != nil {
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if err := wace.Init(meter, conf, logger); err != nil {
 		log.Fatal(err)
 	}
 
@@ -118,8 +128,6 @@ func main() {
 YAML file:
 
 ```yaml
-logpath: /var/log/wace/wace.log
-loglevel: INFO                    # ERROR, WARN, INFO or DEBUG
 natsurl: nats://localhost:4222    # only needed for async or remote models
 credential_headers:               # headers masked when a model has sanitize: true
   - Authorization
@@ -174,6 +182,8 @@ decision_plugins:
 
 Notes:
 
+- Logging is not configured here: the host passes a `*slog.Logger` to `Init`
+  and `Reload`. The old `logpath` and `loglevel` keys are ignored.
 - Several IDs can point to **the same `.so`**: each ID gets its own plugin
   instance with its own params. Copies of the same `.so` at different paths are
   **not** supported. The Go runtime loads only one of them (see
@@ -194,17 +204,30 @@ single function, `NewPlugin`, which returns an instance that implements the
 
 ```go
 type ModelPlugin interface {
-	Process(ModelInput) (ModelResults, error)
-	Reload(params map[string]string, meter metric.Meter) error
+	Process(context.Context, ModelInput) (ModelResults, error)
+	Reload(PluginConfig) error
 	Clean() error
 }
 
 type DecisionPlugin interface {
-	CheckResults(DecisionInput) (DecisionResult, error)
-	Reload(params map[string]string, meter metric.Meter) error
+	CheckResults(context.Context, DecisionInput) (DecisionResult, error)
+	Reload(PluginConfig) error
 	Clean() error
 }
 ```
+
+`NewPlugin` and `Reload` receive a `waceapi.PluginConfig`:
+
+```go
+type PluginConfig struct {
+	Params map[string]string // params of the plugin ID in the configuration
+	Meter  metric.Meter      // OpenTelemetry meter of the host
+	Logger *slog.Logger      // already has component, plugin.type and plugin.id
+}
+```
+
+New fields may be added to `PluginConfig` without changing the signatures, so
+existing plugin code keeps compiling (plugins still have to be rebuilt).
 
 A minimal model plugin:
 
@@ -212,40 +235,49 @@ A minimal model plugin:
 package main
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
-	"go.opentelemetry.io/otel/metric"
 )
 
 type myModel struct {
+	logger    atomic.Pointer[slog.Logger]
 	mu        sync.RWMutex
 	threshold float64
 }
 
 // NewPlugin must return the interface type, not *myModel.
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.ModelPlugin, error) {
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.ModelPlugin, error) {
 	m := &myModel{}
-	if err := m.Reload(params, meter); err != nil {
+	if err := m.Reload(cfg); err != nil {
 		return nil, err
 	}
 	// One-time setup goes here: register metrics, load model files, ...
 	return m, nil
 }
 
-func (m *myModel) Process(in waceapi.ModelInput) (waceapi.ModelResults, error) {
+func (m *myModel) Process(ctx context.Context, in waceapi.ModelInput) (waceapi.ModelResults, error) {
+	if err := ctx.Err(); err != nil {
+		return waceapi.ModelResults{}, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	m.logger.Load().Debug("processing request", waceapi.LogKeyTxID, in.TransactionId)
 	// in.Training is true when the call is only collecting a training sample.
 	return waceapi.ModelResults{ProbAttack: 0, Data: nil}, nil
 }
 
 // Reload applies new params. Parse first and assign only on success, so a
-// rejected reload keeps the previous configuration.
-func (m *myModel) Reload(params map[string]string, meter metric.Meter) error {
-	threshold, err := strconv.ParseFloat(params["threshold"], 64)
+// rejected reload keeps the previous configuration. The logger is replaced
+// even if the params are rejected.
+func (m *myModel) Reload(cfg waceapi.PluginConfig) error {
+	m.logger.Store(cfg.Logger)
+	threshold, err := strconv.ParseFloat(cfg.Params["threshold"], 64)
 	if err != nil {
 		return fmt.Errorf("invalid threshold: %v", err)
 	}
@@ -275,6 +307,13 @@ Rules:
   training call.
 - The same plugin code works for sync, async and remote models. WACE connects
   async and remote models to NATS.
+- Log with `cfg.Logger` and do not add `component`, `plugin.type` or
+  `plugin.id` again. `Reload` can bring a different logger: replace the one
+  the instance keeps, and synchronize it (for example with `atomic.Pointer[slog.Logger]`), 
+  because `Process` / `CheckResults` read it concurrently. Add `tx_id` (`waceapi.LogKeyTxID`) to
+  records about a transaction.
+- The context of `Process` / `CheckResults` is request scoped: stop and return
+  `ctx.Err()` when it is cancelled.
 
 Build the plugin with the **same Go toolchain, the same versions of
 `ModSecIntl_wace_lib` and `go.opentelemetry.io/otel/metric`, and the same build
@@ -298,4 +337,6 @@ mage testCoverage   # same, with coverage (writes coverage.out)
 mage clean          # remove the built plugins
 ```
 
-Architecture decisions are recorded in [`docs/adr`](docs/adr).
+Architecture decisions are recorded in [`docs/adr`](docs/adr). The plugin
+constructor signature is described in
+[ADR 0003](docs/adr/0003-plugin-config-and-slog.md).

@@ -5,29 +5,30 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 
-	lg "github.com/tilsor/ModSecIntl_logging/logging"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
 type weightedSumDecision struct {
+	logger    *slog.Logger
 	mu        sync.RWMutex
 	threshold float64
 }
 
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
-	d := &weightedSumDecision{}
-	if err := d.Reload(params, meter); err != nil {
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.DecisionPlugin, error) {
+	d := &weightedSumDecision{logger: cfg.Logger}
+	if err := d.Reload(cfg); err != nil {
 		return nil, err
 	}
 
 	// Create counter for plugin register
 	ctx := context.Background()
-	pluginCounter, err := meter.Int64Counter("plugin_register")
+	pluginCounter, err := cfg.Meter.Int64Counter("plugin_register")
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +36,7 @@ func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPl
 	return d, nil
 }
 
-func (d *weightedSumDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+func (d *weightedSumDecision) CheckResults(ctx context.Context, decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	var weightedSum float64 = 0
 	var weightsSum float64 = 0
 	for key, value := range decisionInput.Results {
@@ -54,8 +55,8 @@ func (d *weightedSumDecision) CheckResults(decisionInput waceapi.DecisionInput) 
 
 	wafWeight := decisionInput.WAFWeight
 
-	logger := lg.Get()
-	logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "weighted_sum | anomaly score: %v anomaly score threshold: %v", as, it)
+	logger := d.logger.With(waceapi.LogKeyTxID, decisionInput.TransactionId)
+	logger.Debug("WAF anomaly score", "anomaly_score", as, "anomaly_score.threshold", it)
 
 	if as >= it {
 		weightedSum += wafWeight
@@ -70,14 +71,14 @@ func (d *weightedSumDecision) CheckResults(decisionInput waceapi.DecisionInput) 
 	threshold := d.threshold
 	d.mu.RUnlock()
 
-	logger.TPrintf(lg.DEBUG, decisionInput.TransactionId, "weighted_sum | weighted sum: %v threshold: %v", weightedSum, threshold)
+	logger.Debug("weighted sum", "weighted_sum", weightedSum, "threshold", threshold)
 	return waceapi.DecisionResult{Block: weightedSum > threshold}, nil
 }
 
 // Reload reads the optional "threshold" param (default 0.5)
-func (d *weightedSumDecision) Reload(params map[string]string, meter metric.Meter) error {
+func (d *weightedSumDecision) Reload(cfg waceapi.PluginConfig) error {
 	threshold := 0.5
-	if stringThreshold, ok := params["threshold"]; ok {
+	if stringThreshold, ok := cfg.Params["threshold"]; ok {
 		var err error
 		threshold, err = strconv.ParseFloat(stringThreshold, 64)
 		if err != nil {

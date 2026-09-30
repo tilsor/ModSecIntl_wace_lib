@@ -11,11 +11,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
-	"go.opentelemetry.io/otel/metric"
 )
 
 type lifecycleDecision struct {
@@ -23,21 +23,21 @@ type lifecycleDecision struct {
 	failClean bool
 }
 
-func NewPlugin(params map[string]string, meter metric.Meter) (waceapi.DecisionPlugin, error) {
+func NewPlugin(cfg waceapi.PluginConfig) (waceapi.DecisionPlugin, error) {
 	return &lifecycleDecision{
-		cleanFile: params["clean_file"],
-		failClean: params["fail_clean"] == "true",
+		cleanFile: cfg.Params["clean_file"],
+		failClean: cfg.Params["fail_clean"] == "true",
 	}, nil
 }
 
-func (d *lifecycleDecision) CheckResults(decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
+func (d *lifecycleDecision) CheckResults(ctx context.Context, decisionInput waceapi.DecisionInput) (waceapi.DecisionResult, error) {
 	return waceapi.DecisionResult{
 		Block: false,
 		Data:  map[string]bool{"training": decisionInput.Training},
 	}, nil
 }
 
-func (d *lifecycleDecision) Reload(params map[string]string, meter metric.Meter) error {
+func (d *lifecycleDecision) Reload(cfg waceapi.PluginConfig) error {
 	return nil
 }
 
