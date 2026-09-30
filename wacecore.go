@@ -70,13 +70,12 @@ func addTransactionAnalysis(transactionID string) {
 // It waits for all the synchronous model plugins to finish, and sends the
 // result to the client. The asynchronous model plugins are executed in parallel
 func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.ModelPluginType, transactionID string, logger *slog.Logger) error {
-	// channel to receive the status of the execution of the analysis
-	// of all the model plugins executed
-	modelPluginStatus := make(chan pluginmanager.ModelStatus)
-	asyncModelPluginStatus := make(chan pluginmanager.ModelStatus)
-
-	plugins.AddModelChannel(transactionID, t, asyncModelPluginStatus, "async")
-	plugins.AddModelChannel(transactionID, t, modelPluginStatus, "sync")
+	value, ok := analysisMap.Load(transactionID)
+	if !ok {
+		logger.Error("could not find transaction in analysis map")
+		return fmt.Errorf("core | could not find transaction %s in analysis map", transactionID)
+	}
+	defer value.(*transactionSync).wg.Done()
 
 	conf, err := configstore.Get()
 	if err != nil {
@@ -85,117 +84,169 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 
 	syncCounter := 0
 	asyncCounter := 0
-
-	startTime := time.Now()
-
-	sanitizedPayload := sanitizeCredentials(input)
-
+	filteredModels := make([]string, 0, len(models))
 	for _, id := range models {
-		logger.Debug("calling model plugin",
-			waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
-			waceapi.LogKeyPlugin, id)
-		if _, ok := conf.ModelPlugins[id]; !ok {
+		mp, ok := conf.ModelPlugins[id]
+		switch {
+		case !ok:
 			logger.Error("plugin not found",
 				waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
 				waceapi.LogKeyPlugin, id)
-		} else if conf.ModelPlugins[id].PluginType != t {
+		case mp.PluginType != t:
 			logger.Error("wrong plugin type",
 				waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
 				waceapi.LogKeyPlugin, id,
 				"expected.type", t,
 			)
-		} else {
-			payload := input
-			if conf.ShouldSanitize(id) {
-				payload = sanitizedPayload
-			}
-			if conf.IsAsync(id) {
-				asyncCounter++
-				go plugins.AddToQueue(id, transactionID, payload)
-			} else if conf.IsInTraining(id) {
-				go plugins.ProcessTraining(id, transactionID, payload, t)
-			} else {
-				if conf.IsRemote(id) {
-					go plugins.AddToQueue(id, transactionID, payload)
-				} else {
-					go plugins.Process(id, transactionID, payload, t, modelPluginStatus)
-				}
-				syncCounter++
-			}
+		case conf.IsAsync(id):
+			asyncCounter++
+			filteredModels = append(filteredModels, id)
+		case conf.IsInTraining(id):
+			filteredModels = append(filteredModels, id)
+		default:
+			syncCounter++
+			filteredModels = append(filteredModels, id)
 		}
-
 	}
 
-	go func() {
-		logger.Debug("waiting for async model plugins to finish", "count", asyncCounter)
-		wg := sync.WaitGroup{}
-		wg.Add(asyncCounter)
-		for i := 0; i < asyncCounter; i++ {
-			// Await for the execution of the async model plugins
-			logger.Debug("waiting for async model plugin", "index", i+1)
-			status := <-asyncModelPluginStatus
+	var modelPluginStatus chan pluginmanager.ModelStatus
+	var asyncModelPluginStatus chan pluginmanager.ModelStatus
+	if asyncCounter > 0 {
+		asyncModelPluginStatus = make(chan pluginmanager.ModelStatus, asyncCounter)
+		plugins.AddModelChannel(transactionID, t, asyncModelPluginStatus, "async")
+	}
+	if syncCounter > 0 {
+		modelPluginStatus = make(chan pluginmanager.ModelStatus, syncCounter)
+		plugins.AddModelChannel(transactionID, t, modelPluginStatus, "sync")
+	}
+
+	startTime := time.Now()
+
+	sanitizedPayload := sanitizeCredentials(input)
+
+	// A context without deadline never expires, so a zero timeout
+	// waits for every sync model plugin.
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if conf.ModelTimeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), conf.ModelTimeout)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
+	defer cancel()
+
+	for _, id := range filteredModels {
+		logger.Debug("calling model plugin",
+			waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
+			waceapi.LogKeyPlugin, id)
+		payload := input
+		if conf.ShouldSanitize(id) {
+			payload = sanitizedPayload
+		}
+		switch {
+		case conf.IsAsync(id):
+			go plugins.AddToQueue(id, transactionID, payload)
+		case conf.IsInTraining(id):
+			go plugins.ProcessTraining(id, transactionID, payload, t)
+		case conf.IsRemote(id):
+			go plugins.AddToQueue(id, transactionID, payload)
+		default:
+			go plugins.Process(ctx, id, transactionID, payload, t, modelPluginStatus)
+		}
+	}
+
+	// Without async model plugins there is nothing to wait for.
+	if asyncCounter > 0 {
+		go func() {
+			// The async plugins get their own context: the sync one is
+			// cancelled as soon as callPlugins returns.
+			var asyncCtx context.Context
+			var asyncCancel context.CancelFunc
+			if conf.AsyncModelTimeout > 0 {
+				asyncCtx, asyncCancel = context.WithTimeout(context.Background(), conf.AsyncModelTimeout)
+			} else {
+				asyncCtx, asyncCancel = context.WithCancel(context.Background())
+			}
+			defer asyncCancel()
+
+			logger.Debug("waiting for async model plugins to finish", "count", asyncCounter)
+		waitAsync:
+			for i := 0; i < asyncCounter; i++ {
+				// Await for the execution of the async model plugins
+				logger.Debug("waiting for async model plugin", "index", i+1)
+				select {
+				case status := <-asyncModelPluginStatus:
+					if status.Err == nil {
+						logger.Debug("model plugin succeeded",
+							waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
+							waceapi.LogKeyPlugin, status.ModelID,
+							"plugin.mode", "async",
+							"attack.probability", status.ProbAttack)
+						histogramMeter, err := meter.Int64Histogram("wace.model.duration.nanoseconds")
+						if err != nil {
+							logger.Warn("failed to record duration metric", "error", err)
+						}
+						histogramMeter.Record(ctx, time.Since(startTime).Nanoseconds(), metric.WithAttributes(
+							attribute.String("model_id", status.ModelID),
+							attribute.String("model_mode", "async"),
+							attribute.Float64("attack_probability", status.ProbAttack)))
+					} else {
+						logger.Warn("model plugin failed",
+							waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
+							waceapi.LogKeyPlugin, status.ModelID,
+							"plugin.mode", "async",
+							"error", status.Err)
+					}
+				case <-asyncCtx.Done():
+					logger.Warn("plugin call aborted due to timeout",
+						"plugin.mode", "async",
+						"pending", asyncCounter-i,
+						"timeout", conf.AsyncModelTimeout)
+					break waitAsync
+				}
+			}
+			plugins.RemoveAsyncModelChannel(transactionID, t)
+		}()
+	}
+
+	logger.Debug("waiting for sync model plugins to finish", "count", syncCounter)
+waitSync:
+	for i := 0; i < syncCounter; i++ {
+		// Await for the execution of the model plugins
+		logger.Debug("waiting for sync model plugin", "index", i+1)
+		select {
+		case status := <-modelPluginStatus:
 			if status.Err == nil {
 				logger.Debug("model plugin succeeded",
 					waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
 					waceapi.LogKeyPlugin, status.ModelID,
-					"plugin.mode", "async",
+					"plugin.mode", "sync",
 					"attack.probability", status.ProbAttack)
+
 				histogramMeter, err := meter.Int64Histogram("wace.model.duration.nanoseconds")
 				if err != nil {
 					logger.Warn("failed to record duration metric", "error", err)
 				}
 				histogramMeter.Record(ctx, time.Since(startTime).Nanoseconds(), metric.WithAttributes(
 					attribute.String("model_id", status.ModelID),
-					attribute.String("model_mode", "async"),
+					attribute.String("model_mode", "sync"),
 					attribute.Float64("attack_probability", status.ProbAttack)))
 			} else {
 				logger.Warn("model plugin failed",
 					waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
 					waceapi.LogKeyPlugin, status.ModelID,
-					"plugin.mode", "async",
+					"plugin.mode", "sync",
 					"error", status.Err)
 			}
-			wg.Done()
-		}
-		wg.Wait()
-		plugins.RemoveAsyncModelChannel(transactionID, t)
-	}()
-
-	logger.Debug("waiting for sync model plugins to finish", "count", syncCounter)
-	for i := 0; i < syncCounter; i++ {
-		// Await for the execution of the model plugins
-		logger.Debug("waiting for sync model plugin", "index", i+1)
-		status := <-modelPluginStatus
-		if status.Err == nil {
-			logger.Debug("model plugin succeeded",
-				waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
-				waceapi.LogKeyPlugin, status.ModelID,
+		case <-ctx.Done():
+			logger.Warn("plugin call aborted due to timeout",
 				"plugin.mode", "sync",
-				"attack.probability", status.ProbAttack)
-
-			histogramMeter, err := meter.Int64Histogram("wace.model.duration.nanoseconds")
-			if err != nil {
-				logger.Warn("failed to record duration metric", "error", err)
-			}
-			histogramMeter.Record(ctx, time.Since(startTime).Nanoseconds(), metric.WithAttributes(
-				attribute.String("model_id", status.ModelID),
-				attribute.String("model_mode", "sync"),
-				attribute.Float64("attack_probability", status.ProbAttack)))
-		} else {
-			logger.Warn("model plugin failed",
-				waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
-				waceapi.LogKeyPlugin, status.ModelID,
-				"plugin.mode", "sync",
-				"error", status.Err)
+				"pending", syncCounter-i,
+				"timeout", conf.ModelTimeout)
+			break waitSync
 		}
 	}
 
-	value, ok := analysisMap.Load(transactionID)
-	if !ok {
-		logger.Error("could not find transaction in analysis map")
-		return fmt.Errorf("core | could not find transaction %s in analysis map", transactionID)
-	}
-	value.(*transactionSync).wg.Done()
 	return nil
 }
 

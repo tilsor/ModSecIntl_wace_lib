@@ -280,9 +280,7 @@ func (p *PluginManager) ProcessTraining(modelID, transactionID string, payload w
 		return
 	}
 
-	// TODO: receive the context from Analyze; the training result is
-	// collected after the request, so it must not be cancelled with it
-	res, err := p.modelProcess(context.TODO(), modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload, Training: true}, t)
+	res, err := p.modelProcess(mp.trainingCtx, modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload, Training: true}, t)
 	if err != nil {
 		logger.Error("cannot process training request", "error", err)
 		return

@@ -47,7 +47,7 @@ The `wace` package exports the following functions:
 | `Reload(meter, conf, logger) error` | Applies a new configuration and logger (`nil` uses `slog.Default()`): reloads the params of existing plugins, loads new ones, and unloads the ones that were removed. |
 | `InitTransaction(id)` | Starts a transaction with the given identifier. Call it once per transaction. |
 | `Analyze(modelType, id, payload, models) error` | Runs the given model plugins on a part of the transaction. `modelType` is one of `RequestHeaders`, `RequestBody`, `AllRequest`, `ResponseHeaders`, `ResponseBody`, `AllResponse` or `Everything`. It returns immediately; the models run in the background. |
-| `CheckTransaction(id, decisionPlugins, wafData) (block, decided bool, err error)` | Waits for the sync models started so far and runs the given decision plugins. At most one of them may be a production plugin; the others must be in training. `block` is the verdict of the production plugin, and `decided` reports whether one was found. A call with only training plugins returns `block == false`. |
+| `CheckTransaction(id, decisionPlugins, wafData) (block, decided bool, err error)` | Waits for the sync models started so far (at most `model_timeout` per `Analyze` call, see [Timeouts](#timeouts)) and runs the given decision plugins. At most one of them may be a production plugin; the others must be in training. `block` is the verdict of the production plugin, and `decided` reports whether one was found. A call with only training plugins returns `block == false`. |
 | `CloseTransaction(id)` | Ends the transaction and releases its data. Call it once, when the analysis is complete. |
 
 A transaction follows the order `InitTransaction` → `Analyze` →
@@ -132,6 +132,8 @@ natsurl: nats://localhost:4222    # only needed for async or remote models
 credential_headers:               # headers masked when a model has sanitize: true
   - Authorization
   - Cookie
+model_timeout: 200ms              # max wait for the sync models (default 200ms, 0s: no limit)
+async_model_timeout: 60s          # max wait for the async models (default 60s, 0s: no limit)
 
 model_plugins:
   - id: model_app_a
@@ -145,6 +147,7 @@ model_plugins:
     params:
       threshold: "0.8"
     sanitize: true                # mask credentials before calling the model
+    timeout: 50ms                 # bounds each call to this plugin (default: none)
   - id: model_async
     path: /opt/wace/plugins/slow_model.so
     plugin_type: Everything
@@ -168,6 +171,7 @@ decision_plugins:
     waf_weight: 0.5
     params:
       threshold: "0.5"
+    timeout: 20ms                 # bounds each call to this plugin (default: none)
   - id: weighted_v2
     path: /opt/wace/plugins/weighted_sum_v2.so
     model_weights:
@@ -195,6 +199,15 @@ Notes:
   written atomically to `status_file_path`. See
   [ADR 0001](docs/adr/0001-trainable-decision-plugins.md) for how decision
   plugin training works.
+
+### Timeouts
+
+- When `model_timeout` expires, `CheckTransaction` runs the decision plugins
+  with the model results that arrived, so the late models are left out.
+- WACE cannot interrupt a running plugin: timeouts cancel the plugin context,
+  and they only stop plugins that check it.
+- A decision plugin that ignores its context delays `CheckTransaction` until
+  it returns, because it is called synchronously.
 
 ## Writing plugins
 
@@ -312,8 +325,10 @@ Rules:
   the instance keeps, and synchronize it (for example with `atomic.Pointer[slog.Logger]`), 
   because `Process` / `CheckResults` read it concurrently. Add `tx_id` (`waceapi.LogKeyTxID`) to
   records about a transaction.
-- The context of `Process` / `CheckResults` is request scoped: stop and return
-  `ctx.Err()` when it is cancelled.
+- The context of `Process` / `CheckResults` carries the timeouts of the call
+  (see [Timeouts](#timeouts)): stop and return `ctx.Err()` when it is
+  cancelled. Pass it to any I/O the plugin does, such as HTTP or gRPC calls,
+  and do not keep using it after returning.
 
 Build the plugin with the **same Go toolchain, the same versions of
 `ModSecIntl_wace_lib` and `go.opentelemetry.io/otel/metric`, and the same build
