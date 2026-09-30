@@ -754,20 +754,30 @@ func TestPluginManagerAddModelChannelAndClose(t *testing.T) {
 	txID := generateRandomID()
 	pm.InitTransaction(txID)
 
-	ch := make(chan ModelStatus)
+	ch := make(chan ModelStatus, 1)
 	pm.AddModelChannel(txID, configstore.Everything, ch, "sync")
 
-	// CloseTransaction must close the registered channel and clean up maps.
+	// CloseTransaction must clean up the maps without closing the channel.
 	pm.CloseTransaction(txID)
 
-	// A closed channel returns immediately with ok=false.
-	select {
-	case _, ok := <-ch:
-		if ok {
-			t.Error("expected channel to be closed by CloseTransaction")
+	if _, ok := pm.syncModelsChannels.Load(txID); ok {
+		t.Error("CloseTransaction should have removed the transaction channels")
+	}
+	if _, ok := pm.results.Load(txID); ok {
+		t.Error("CloseTransaction should have removed the transaction results")
+	}
+
+	// A model plugin reporting after the transaction was closed (e.g.
+	// after a timeout) must neither panic nor block.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("late send after CloseTransaction panicked: %v", r)
 		}
+	}()
+	select {
+	case ch <- ModelStatus{ModelID: "trivial"}:
 	default:
-		t.Error("CloseTransaction should have closed the registered channel")
+		t.Error("late send after CloseTransaction should not block")
 	}
 }
 

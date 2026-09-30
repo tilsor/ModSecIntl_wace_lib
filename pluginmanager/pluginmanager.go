@@ -24,7 +24,7 @@ import (
 type ModelTransmitionResults struct {
 	TransactionId        string `json:"transactionId"`
 	waceapi.ModelResults `json:",inline"`
-	Error                error `json:"error"`
+	Error                string `json:"error,omitempty"`
 }
 
 // modelPluginData is the struct that stores the model plugin and its type
@@ -376,10 +376,6 @@ func (p *PluginManager) CloseTransaction(transactionId string) {
 		logger.Error("transaction not found")
 	} else {
 		transactionMap.(*sync.Map).Range(func(key, value interface{}) bool {
-			ch := value.(chan ModelStatus)
-			close(ch)
-			for range ch {
-			}
 			transactionMap.(*sync.Map).Delete(key)
 			return true
 		})
@@ -414,14 +410,7 @@ func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t configst
 	typeModel, ok := p.asyncModelsChannels.Load(transactionId)
 	if ok {
 		channelMap := typeModel.(*sync.Map)
-		ch, channelOk := channelMap.Load(t.String())
-
-		if channelOk {
-			close(ch.(chan ModelStatus))
-			for range ch.(chan ModelStatus) {
-			}
-			channelMap.Delete(t.String())
-		}
+		channelMap.Delete(t.String())
 
 		remainChannels := 0
 		typeModel.(*sync.Map).Range(func(key, value interface{}) bool {
@@ -580,6 +569,18 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 	return result, enabledPluginFound, nil
 }
 
+// notifyStatus sends status on ch without blocking. The channel is
+// buffered with room for one status per model, so it is only full when
+// a result is received more than once (e.g. a duplicated message);
+// that extra result is dropped instead of blocking the goroutine forever.
+func (p *PluginManager) notifyStatus(ch chan ModelStatus, status ModelStatus, transactionID string) {
+	select {
+	case ch <- status:
+	default:
+		p.pluginLogger(status.ModelID, modelKind).Warn("result dropped, nobody is waiting for it", waceapi.LogKeyTxID, transactionID)
+	}
+}
+
 // ModelResultsHandler listens for messages on the model results queue
 func (p *PluginManager) ModelResultsHandler(modelID string) error {
 	cs, err := configstore.Get()
@@ -608,20 +609,20 @@ func (p *PluginManager) ModelResultsHandler(modelID string) error {
 					if !ok {
 						p.pluginLogger(modelID, modelKind).Error("model channel not found", waceapi.LogKeyTxID, data.TransactionId)
 					} else {
-						if data.Error != nil {
-							modelChannel.(chan ModelStatus) <- ModelStatus{ModelID: modelID, Err: data.Error}
+						if data.Error != "" {
+							p.notifyStatus(modelChannel.(chan ModelStatus), ModelStatus{ModelID: modelID, Err: fmt.Errorf("%s", data.Error)}, data.TransactionId)
 						} else {
 							if !cs.IsAsync(modelID) {
 								// store the results
 								resultSyncMap, ok := p.results.Load(data.TransactionId)
 								if !ok {
-									modelChannel.(chan ModelStatus) <- ModelStatus{ModelID: modelID, Err: fmt.Errorf("transaction results not found")}
+									p.notifyStatus(modelChannel.(chan ModelStatus), ModelStatus{ModelID: modelID, Err: fmt.Errorf("transaction results not found")}, data.TransactionId)
 									return
 								}
 								modelResult := waceapi.ModelResults{ProbAttack: data.ProbAttack, Data: data.Data}
 								resultSyncMap.(*sync.Map).Store(modelID, modelResult)
 							}
-							modelChannel.(chan ModelStatus) <- ModelStatus{ModelID: modelID, ProbAttack: data.ProbAttack, Err: nil}
+							p.notifyStatus(modelChannel.(chan ModelStatus), ModelStatus{ModelID: modelID, ProbAttack: data.ProbAttack, Err: nil}, data.TransactionId)
 						}
 					}
 				}
@@ -671,7 +672,9 @@ func (p *PluginManager) ModelProcessHandler(modelId string, modelProcess func(co
 				payloadToSend := &ModelTransmitionResults{
 					TransactionId: data.TransactionId,
 					ModelResults:  modelResult,
-					Error:         err,
+				}
+				if err != nil {
+					payloadToSend.Error = err.Error()
 				}
 
 				jsonPayload, err := json.Marshal(payloadToSend)

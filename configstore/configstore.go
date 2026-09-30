@@ -168,10 +168,9 @@ type ConfigFileData struct {
 	DecisionPlugins   []configFileDecisionPlugin `yaml:"decision_plugins"`
 	NatsURL           string
 	CredentialHeaders []string `yaml:"credential_headers"`
-	// ModelTimeout is a pointer to tell apart a missing value (nil,
-	// DefaultModelTimeout is used) from an explicit 0s (no timeout)
-	ModelTimeout *time.Duration `yaml:"model_timeout"`
-	// AsyncModelTimeout is a pointer for the same reason as ModelTimeout
+	// nil value indicates that the default value must be used
+	// a 0 value indicates no timeout must be used
+	ModelTimeout      *time.Duration `yaml:"model_timeout"`
 	AsyncModelTimeout *time.Duration `yaml:"async_model_timeout"`
 }
 
