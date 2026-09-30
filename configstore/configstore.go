@@ -85,6 +85,7 @@ type modelPluginConfig struct {
 	Training     bool
 	TrainingData TrainingData
 	sanitize     bool
+	Timeout      time.Duration
 }
 
 // DecisionPluginConfig stores the configuration of a decision plugin
@@ -96,6 +97,8 @@ type decisionPluginConfig struct {
 	TrainingData TrainingData
 	ModelWeights map[string]float64
 	WAFWeight    float64
+	// Timeout bounds each call to the plugin. Zero means no timeout.
+	Timeout time.Duration
 }
 
 // ConfigStore stores all wacecore configuration from the config file.
@@ -151,6 +154,7 @@ type configFileModelPlugin struct {
 	Training     bool
 	TrainingData TrainingData `yaml:"training_data"`
 	Sanitize     bool
+	Timeout      time.Duration
 }
 
 type configFileDecisionPlugin struct {
@@ -161,6 +165,7 @@ type configFileDecisionPlugin struct {
 	WAFWeight    float64            `yaml:"waf_weight"`
 	Training     bool
 	TrainingData TrainingData `yaml:"training_data"`
+	Timeout      time.Duration
 }
 
 type ConfigFileData struct {
@@ -220,6 +225,9 @@ func checkConfig(inConf ConfigFileData) error {
 		if modelP.PluginType == "" {
 			return fmt.Errorf("%s plugin type cannot be empty, please provide a valid type", modelP.ID)
 		}
+		if modelP.Timeout < 0 {
+			return fmt.Errorf("model %s: timeout cannot be negative: %v", modelP.ID, modelP.Timeout)
+		}
 		if modelP.Training && modelP.Async {
 			return fmt.Errorf("model %s plugin cannot be in training mode and async mode at the same time", modelP.ID)
 		}
@@ -240,6 +248,9 @@ func checkConfig(inConf ConfigFileData) error {
 			}
 		} else {
 			return fmt.Errorf("%s plugin path is empty, please provide a valid path", decisionP.ID)
+		}
+		if decisionP.Timeout < 0 {
+			return fmt.Errorf("decision %s: timeout cannot be negative: %v", decisionP.ID, decisionP.Timeout)
 		}
 		if decisionP.Training && (decisionP.TrainingData.MaxSamples <= 0 || decisionP.TrainingData.MinSamples < 0 ||
 			decisionP.TrainingData.MaxSamples < decisionP.TrainingData.MinSamples || decisionP.TrainingData.MaxSamples < decisionP.TrainingData.StatusUpdateInterval) {
@@ -272,6 +283,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 			modelConfig.TrainingData.StatusUpdateInterval = max(1, modelConfig.TrainingData.MaxSamples/10)
 		}
 		modelConfig.sanitize = modelP.Sanitize
+		modelConfig.Timeout = modelP.Timeout
 		if err != nil {
 			return err
 		}
@@ -291,6 +303,7 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 		}
 		decisionConfig.ModelWeights = decisionP.ModelWeights
 		decisionConfig.WAFWeight = decisionP.WAFWeight
+		decisionConfig.Timeout = decisionP.Timeout
 		cs.DecisionPlugins[decisionConfig.ID] = decisionConfig
 	}
 

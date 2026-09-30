@@ -12,6 +12,7 @@ import (
 	"plugin"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
@@ -441,6 +442,15 @@ func (p *PluginManager) AddToQueue(modelID, transactionID string, payload waceap
 	return p.natConn.Publish(modelID, jsonPayload)
 }
 
+// pluginContext returns the context passed to a plugin call: parent
+// bounded by timeout when it is positive, or parent itself otherwise.
+func pluginContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(parent, timeout)
+	}
+	return parent, func() {}
+}
+
 func (p *PluginManager) modelProcess(ctx context.Context, modelID string, mp modelPluginData, payload waceapi.ModelInput, t configstore.ModelPluginType) (waceapi.ModelResults, error) {
 	// check if the plugin is capable of analyzing the indicated part of the transaction
 	if mp.pluginType != t {
@@ -455,11 +465,15 @@ func (p *PluginManager) modelProcess(ctx context.Context, modelID string, mp mod
 	if conf.IsAsync(modelID) {
 		return waceapi.ModelResults{}, fmt.Errorf("model plugin is async")
 	}
+	ctx, cancel := pluginContext(ctx, conf.ModelPlugins[modelID].Timeout)
+	defer cancel()
 	return mp.modelPlugin.Process(ctx, payload)
 }
 
-// Process is in charge of calling the model plugin with id modelID
-func (p *PluginManager) Process(modelID, transactionID string, payload waceapi.HTTPPayload, t configstore.ModelPluginType, modelPlugStatus chan ModelStatus) {
+// Process is in charge of calling the model plugin with id modelID. The
+// plugin gets a context derived from ctx, bounded by its own timeout if
+// one is configured.
+func (p *PluginManager) Process(ctx context.Context, modelID, transactionID string, payload waceapi.HTTPPayload, t configstore.ModelPluginType, modelPlugStatus chan ModelStatus) {
 	p.modelMutex.RLock()
 	mp, exists := p.modelPlugins[modelID]
 	p.modelMutex.RUnlock()
@@ -468,8 +482,7 @@ func (p *PluginManager) Process(modelID, transactionID string, payload waceapi.H
 		return
 	}
 
-	// TODO: receive the context from Analyze
-	res, err := p.modelProcess(context.TODO(), modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload}, t)
+	res, err := p.modelProcess(ctx, modelID, mp, waceapi.ModelInput{TransactionId: transactionID, Payload: payload}, t)
 
 	if err != nil {
 		modelPlugStatus <- ModelStatus{ModelID: modelID, Err: err}
@@ -535,9 +548,11 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 				continue
 			}
 			go func() {
-				// TODO: receive the context from CheckTransaction; the sample is
-				// collected after the request, so it must not be cancelled with it
-				res, err := dp.decisionPlugin.CheckResults(context.TODO(), input)
+				// The sample is collected off the request path, so it is only
+				// bounded by the plugin timeout and stopped with the training.
+				ctx, cancel := pluginContext(dp.trainingCtx, dpConf.Timeout)
+				defer cancel()
+				res, err := dp.decisionPlugin.CheckResults(ctx, input)
 				if err != nil {
 					logger.Warn("training check failed, dropping sample", "error", err)
 					return
@@ -557,8 +572,9 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 		}
 		enabledPluginFound = true
 
-		// TODO: receive the context from CheckTransaction
-		res, err := dp.decisionPlugin.CheckResults(context.TODO(), input)
+		ctx, cancel := pluginContext(context.Background(), dpConf.Timeout)
+		defer cancel()
+		res, err := dp.decisionPlugin.CheckResults(ctx, input)
 		if err != nil {
 			return false, true, err
 		}
@@ -667,7 +683,9 @@ func (p *PluginManager) ModelProcessHandler(modelId string, modelProcess func(co
 				p.pluginLogger(modelId, modelKind).Error("failed to parse JSON input payload", "error", err)
 			} else {
 				// TODO: propagate the context of the request through NATS
-				res, err := modelProcess(context.TODO(), *data)
+				ctx, cancel := pluginContext(context.Background(), cs.ModelPlugins[modelId].Timeout)
+				res, err := modelProcess(ctx, *data)
+				cancel()
 				modelResult := waceapi.ModelResults{ProbAttack: res.ProbAttack, Data: res.Data}
 				payloadToSend := &ModelTransmitionResults{
 					TransactionId: data.TransactionId,

@@ -821,3 +821,58 @@ func TestAsyncModelTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestPluginTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout string
+		want    time.Duration
+		wantErr bool
+	}{
+		{name: "no timeout when not set", timeout: "", want: 0},
+		{name: "explicit 0s means no timeout", timeout: "    timeout: 0s\n", want: 0},
+		{name: "stores custom timeout", timeout: "    timeout: 750ms\n", want: 750 * time.Millisecond},
+		{name: "negative timeout is rejected", timeout: "    timeout: -1s\n", wantErr: true},
+		{name: "timeout without unit is rejected", timeout: "    timeout: 150\n", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		for _, kind := range []string{"model", "decision"} {
+			t.Run(kind+"/"+tt.name, func(t *testing.T) {
+				cs, err := New()
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer Clean()
+
+				config := "---\nmodel_plugins:\n  - id: \"trivial\"\n    path: \"../testdata/plugins/model/trivial.so\"\n    plugin_type: \"Everything\"\n"
+				if kind == "model" {
+					config += tt.timeout
+				}
+				config += "decision_plugins:\n  - id: \"test\"\n    path: \"../testdata/plugins/decision/test.so\"\n"
+				if kind == "decision" {
+					config += tt.timeout
+				}
+
+				err = initialize([]byte(config))
+				if tt.wantErr {
+					if err == nil {
+						t.Fatal("expected error, got nil")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("initialize failed: %v", err)
+				}
+
+				got := cs.ModelPlugins["trivial"].Timeout
+				if kind == "decision" {
+					got = cs.DecisionPlugins["test"].Timeout
+				}
+				if got != tt.want {
+					t.Errorf("Timeout = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	}
+}

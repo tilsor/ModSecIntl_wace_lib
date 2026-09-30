@@ -279,7 +279,7 @@ func TestPluginManagerReloadLogger(t *testing.T) {
 	txID := generateRandomID()
 	pm.InitTransaction(txID)
 	ch := make(chan ModelStatus, 1)
-	pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	pm.Process(context.Background(), "trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	if status := <-ch; status.Err != nil {
 		t.Fatalf("Process: %v", status.Err)
 	}
@@ -336,7 +336,7 @@ func TestPluginManagerProcessSync(t *testing.T) {
 			defer pm.CloseTransaction(txID)
 
 			ch := make(chan ModelStatus, 1)
-			go pm.Process(tt.modelID, txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+			go pm.Process(context.Background(), tt.modelID, txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 			status := <-ch
 
 			if (status.Err != nil) != tt.wantErr {
@@ -362,7 +362,7 @@ func TestPluginManagerProcessNonexistentPlugin(t *testing.T) {
 	defer pm.CloseTransaction(txID)
 
 	ch := make(chan ModelStatus, 1)
-	go pm.Process("nonexistent", txID, waceapi.HTTPPayload{}, configstore.Everything, ch)
+	go pm.Process(context.Background(), "nonexistent", txID, waceapi.HTTPPayload{}, configstore.Everything, ch)
 	status := <-ch
 	if status.Err == nil {
 		t.Error("Process with nonexistent plugin ID should return error via channel")
@@ -410,7 +410,7 @@ func TestPluginManagerCheckResult(t *testing.T) {
 			defer pm.CloseTransaction(txID)
 
 			ch := make(chan ModelStatus, 1)
-			go pm.Process(tt.modelID, txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+			go pm.Process(context.Background(), tt.modelID, txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 			<-ch
 
 			result, _, err := pm.CheckResult(txID, []string{"simple"}, tt.wafParams)
@@ -446,7 +446,7 @@ func TestPluginManagerTransactionLifecycle(t *testing.T) {
 	pm.InitTransaction(txID)
 
 	ch := make(chan ModelStatus, 1)
-	go pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	go pm.Process(context.Background(), "trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	status := <-ch
 	if status.Err != nil {
 		t.Fatalf("Process error: %v", status.Err)
@@ -493,7 +493,7 @@ func TestPluginManagerLoadModelFailures(t *testing.T) {
 			defer pm.CloseTransaction(txID)
 
 			ch := make(chan ModelStatus, 1)
-			go pm.Process(tt.modelID, txID, waceapi.HTTPPayload{}, configstore.Everything, ch)
+			go pm.Process(context.Background(), tt.modelID, txID, waceapi.HTTPPayload{}, configstore.Everything, ch)
 			status := <-ch
 			if status.Err == nil {
 				t.Errorf("Process(%q): expected error (plugin should not have been loaded)", tt.modelID)
@@ -551,7 +551,7 @@ func TestPluginManagerReload(t *testing.T) {
 	defer pm.CloseTransaction(txID)
 
 	ch := make(chan ModelStatus, 1)
-	go pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	go pm.Process(context.Background(), "trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	status := <-ch
 	if status.Err != nil {
 		t.Errorf("Process after Reload: unexpected error: %v", status.Err)
@@ -579,7 +579,7 @@ func TestPluginManagerProcessTypeMismatch(t *testing.T) {
 
 	// Pass Everything — does not match the registered RequestHeaders type.
 	ch := make(chan ModelStatus, 1)
-	go pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	go pm.Process(context.Background(), "trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	status := <-ch
 	if status.Err == nil {
 		t.Error("Process with mismatched plugin type should return error via channel")
@@ -601,7 +601,7 @@ func TestPluginManagerReloadChangesOutput(t *testing.T) {
 		defer pm.CloseTransaction(txID)
 
 		ch := make(chan ModelStatus, 1)
-		go pm.Process("param", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+		go pm.Process(context.Background(), "param", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 		status := <-ch
 		if status.Err != nil {
 			t.Errorf("Process: unexpected error: %v", status.Err)
@@ -668,7 +668,7 @@ func processProb(t *testing.T, pm *PluginManager, modelID string) (float64, erro
 	defer pm.CloseTransaction(txID)
 
 	ch := make(chan ModelStatus, 1)
-	go pm.Process(modelID, txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	go pm.Process(context.Background(), modelID, txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	status := <-ch
 	return status.ProbAttack, status.Err
 }
@@ -813,7 +813,7 @@ func TestPluginManagerProcessAsyncPlugin(t *testing.T) {
 	defer pm.CloseTransaction(txID)
 
 	ch := make(chan ModelStatus, 1)
-	go pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	go pm.Process(context.Background(), "trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	status := <-ch
 	if status.Err == nil {
 		t.Error("Process on async-configured plugin should return error via channel")
@@ -1026,7 +1026,7 @@ func TestPluginManagerProcessWithoutTransaction(t *testing.T) {
 	txID := generateRandomID()
 
 	ch := make(chan ModelStatus, 1)
-	go pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	go pm.Process(context.Background(), "trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	status := <-ch
 	if status.Err == nil {
 		t.Error("Process without InitTransaction should return error via channel")
@@ -1098,7 +1098,7 @@ func TestPluginManagerDecisionTrainingCollectsAlongsideProduction(t *testing.T) 
 	defer pm.CloseTransaction(txID)
 
 	ch := make(chan ModelStatus, 1)
-	go pm.Process("trivial2", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	go pm.Process(context.Background(), "trivial2", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	<-ch
 
 	waf := waceapi.WAFData{Scores: map[string]float64{"inbound_blocking": 20, "inbound_threshold": 5}}
@@ -1143,7 +1143,7 @@ func TestPluginManagerDecisionTrainingOnlyDoesNotBlock(t *testing.T) {
 	defer pm.CloseTransaction(txID)
 
 	ch := make(chan ModelStatus, 1)
-	go pm.Process("trivial2", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	go pm.Process(context.Background(), "trivial2", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	<-ch
 
 	waf := waceapi.WAFData{Scores: map[string]float64{"inbound_blocking": 20, "inbound_threshold": 5}}
@@ -1432,7 +1432,7 @@ func TestPluginManagerModelTrainingFlag(t *testing.T) {
 	pm.InitTransaction(txID)
 	defer pm.CloseTransaction(txID)
 	ch := make(chan ModelStatus, 1)
-	pm.Process("lifecycle", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+	pm.Process(context.Background(), "lifecycle", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 	if status := <-ch; status.Err != nil {
 		t.Fatalf("Process: unexpected error: %v", status.Err)
 	}
@@ -1505,7 +1505,7 @@ func TestPluginManagerConcurrentReloadAndRequests(t *testing.T) {
 				txID := generateRandomID()
 				pm.InitTransaction(txID)
 				ch := make(chan ModelStatus, 1)
-				pm.Process("trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
+				pm.Process(context.Background(), "trivial", txID, waceapi.HTTPPayload{URI: "/test"}, configstore.Everything, ch)
 				if status := <-ch; status.Err != nil {
 					t.Errorf("Process during Reload: %v", status.Err)
 				}
@@ -1678,4 +1678,109 @@ func TestPluginManagerCheckResultBeforeTrainingStarts(t *testing.T) {
 	// CheckResult starts and does not wait for. Give it time to run so that the
 	// panic, which aborts the test binary, surfaces in this test.
 	time.Sleep(200 * time.Millisecond)
+}
+
+// deadlineConfig returns a config with the deadline model and decision
+// plugins, both with the given timeout when it is not empty.
+func deadlineConfig(timeout string) []byte {
+	opt := ""
+	if timeout != "" {
+		opt = "    timeout: " + timeout + "\n"
+	}
+	return []byte(baseConfig + `model_plugins:
+  - id: "deadline"
+    path: "../testdata/plugins/model/deadline.so"
+    plugin_type: "Everything"
+` + opt + `decision_plugins:
+  - id: "deadline"
+    path: "../testdata/plugins/decision/deadline.so"
+` + opt)
+}
+
+// TestPluginManagerModelTimeout verifies that Process gives the model
+// plugin a context bounded by its own timeout, if configured, and by the
+// parent context.
+func TestPluginManagerModelTimeout(t *testing.T) {
+	tests := []struct {
+		name          string
+		timeout       string
+		parentTimeout time.Duration
+		wantDeadline  bool
+		wantAtMost    time.Duration
+	}{
+		{name: "no timeout", wantDeadline: false},
+		{name: "plugin timeout", timeout: "500ms", wantDeadline: true, wantAtMost: 500 * time.Millisecond},
+		{name: "parent deadline without plugin timeout", parentTimeout: 100 * time.Millisecond, wantDeadline: true, wantAtMost: 100 * time.Millisecond},
+		{name: "parent deadline shorter than plugin timeout", timeout: "5s", parentTimeout: 100 * time.Millisecond, wantDeadline: true, wantAtMost: 100 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pm := setupPluginManager(t, deadlineConfig(tt.timeout))
+
+			ctx := context.Background()
+			if tt.parentTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.parentTimeout)
+				defer cancel()
+			}
+
+			txID := generateRandomID()
+			pm.InitTransaction(txID)
+			defer pm.CloseTransaction(txID)
+			ch := make(chan ModelStatus, 1)
+			pm.Process(ctx, "deadline", txID, waceapi.HTTPPayload{}, configstore.Everything, ch)
+			if status := <-ch; status.Err != nil {
+				t.Fatalf("Process: unexpected error: %v", status.Err)
+			}
+			results, _ := pm.results.Load(txID)
+			res, ok := results.(*sync.Map).Load("deadline")
+			if !ok {
+				t.Fatal("Process did not store the result")
+			}
+			mr := res.(waceapi.ModelResults)
+
+			if gotDeadline := mr.ProbAttack == 1; gotDeadline != tt.wantDeadline {
+				t.Fatalf("plugin context has deadline = %v, want %v", gotDeadline, tt.wantDeadline)
+			}
+			if !tt.wantDeadline {
+				return
+			}
+			left := mr.Data.(time.Duration)
+			if left <= 0 || left > tt.wantAtMost {
+				t.Errorf("time left in plugin context = %v, want in (0, %v]", left, tt.wantAtMost)
+			}
+		})
+	}
+}
+
+// TestPluginManagerDecisionTimeout verifies that CheckResult bounds the
+// decision plugin only by its own timeout, if configured.
+func TestPluginManagerDecisionTimeout(t *testing.T) {
+	tests := []struct {
+		name         string
+		timeout      string
+		wantDeadline bool
+	}{
+		{name: "no timeout", wantDeadline: false},
+		{name: "plugin timeout", timeout: "500ms", wantDeadline: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pm := setupPluginManager(t, deadlineConfig(tt.timeout))
+
+			txID := generateRandomID()
+			pm.InitTransaction(txID)
+			defer pm.CloseTransaction(txID)
+			// the deadline decision plugin blocks when its context has a deadline
+			gotDeadline, _, err := pm.CheckResult(txID, []string{"deadline"}, waceapi.WAFData{})
+			if err != nil {
+				t.Fatalf("CheckResult: unexpected error: %v", err)
+			}
+			if gotDeadline != tt.wantDeadline {
+				t.Errorf("decision plugin context has deadline = %v, want %v", gotDeadline, tt.wantDeadline)
+			}
+		})
+	}
 }

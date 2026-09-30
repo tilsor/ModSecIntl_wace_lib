@@ -151,7 +151,7 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 		case conf.IsRemote(id):
 			go plugins.AddToQueue(id, transactionID, payload)
 		default:
-			go plugins.Process(id, transactionID, payload, t, modelPluginStatus)
+			go plugins.Process(ctx, id, transactionID, payload, t, modelPluginStatus)
 		}
 	}
 
