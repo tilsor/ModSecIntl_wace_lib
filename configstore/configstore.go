@@ -8,6 +8,7 @@ package configstore
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 // ModelPluginType is an enum listing the parts of a request or
@@ -104,7 +105,17 @@ type ConfigStore struct {
 	NatsURL           string
 	ApplicationId     string
 	CredentialHeaders []string
+	ModelTimeout      time.Duration
+	AsyncModelTimeout time.Duration
 }
+
+// DefaultModelTimeout is used when model_timeout is not set in the
+// config file
+const DefaultModelTimeout = 200 * time.Millisecond
+
+// DefaultAsyncModelTimeout is used when async_model_timeout is not set
+// in the config file
+const DefaultAsyncModelTimeout = 60 * time.Second
 
 var config *ConfigStore
 
@@ -157,6 +168,11 @@ type ConfigFileData struct {
 	DecisionPlugins   []configFileDecisionPlugin `yaml:"decision_plugins"`
 	NatsURL           string
 	CredentialHeaders []string `yaml:"credential_headers"`
+	// ModelTimeout is a pointer to tell apart a missing value (nil,
+	// DefaultModelTimeout is used) from an explicit 0s (no timeout)
+	ModelTimeout *time.Duration `yaml:"model_timeout"`
+	// AsyncModelTimeout is a pointer for the same reason as ModelTimeout
+	AsyncModelTimeout *time.Duration `yaml:"async_model_timeout"`
 }
 
 // IsAsync returns true if the model plugin is async
@@ -186,6 +202,13 @@ func (c *ConfigStore) ShouldSanitize(modelID string) bool {
 // CheckConfig verifies if the configuration read from the config file
 // is correct.
 func checkConfig(inConf ConfigFileData) error {
+	if inConf.ModelTimeout != nil && *inConf.ModelTimeout < 0 {
+		return fmt.Errorf("model timeout cannot be negative: %v", *inConf.ModelTimeout)
+	}
+	if inConf.AsyncModelTimeout != nil && *inConf.AsyncModelTimeout < 0 {
+		return fmt.Errorf("async model timeout cannot be negative: %v", *inConf.AsyncModelTimeout)
+	}
+
 	// check modelplugins
 	for _, modelP := range inConf.ModelPlugins {
 		if modelP.Path != "" {
@@ -275,6 +298,15 @@ func (cs *ConfigStore) SetConfig(inConf ConfigFileData) error {
 	cs.NatsURL = inConf.NatsURL
 
 	cs.CredentialHeaders = inConf.CredentialHeaders
+
+	cs.ModelTimeout = DefaultModelTimeout
+	if inConf.ModelTimeout != nil {
+		cs.ModelTimeout = *inConf.ModelTimeout
+	}
+	cs.AsyncModelTimeout = DefaultAsyncModelTimeout
+	if inConf.AsyncModelTimeout != nil {
+		cs.AsyncModelTimeout = *inConf.AsyncModelTimeout
+	}
 
 	return nil
 }
