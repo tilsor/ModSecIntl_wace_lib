@@ -372,25 +372,16 @@ func (p *PluginManager) InitTransaction(transactionId string) {
 // removing all sync model data
 func (p *PluginManager) CloseTransaction(transactionId string) {
 	logger := p.getLogger().With(waceapi.LogKeyTxID, transactionId)
-	transactionMap, ok := p.syncModelsChannels.Load(transactionId)
+
+	_, ok := p.results.LoadAndDelete(transactionId)
 	if !ok {
-		logger.Error("transaction not found")
-	} else {
-		transactionMap.(*sync.Map).Range(func(key, value interface{}) bool {
-			transactionMap.(*sync.Map).Delete(key)
-			return true
-		})
-		p.syncModelsChannels.Delete(transactionId)
-		resultsMap, ok := p.results.Load(transactionId)
-		if !ok {
-			logger.Error("results for transaction not found")
-		} else {
-			resultsMap.(*sync.Map).Range(func(key, value interface{}) bool {
-				resultsMap.(*sync.Map).Delete(key)
-				return true
-			})
-		}
-		p.results.Delete(transactionId)
+		logger.Error("results for transaction not found")
+	}
+
+	_, ok = p.syncModelsChannels.LoadAndDelete(transactionId)
+	if !ok {
+		logger.Debug("transaction not found")
+		return
 	}
 }
 
