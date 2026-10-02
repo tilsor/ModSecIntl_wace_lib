@@ -21,7 +21,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-var plugins *pluginmanager.PluginManager
+var pm *pluginmanager.PluginManager
 var ctx = context.Background()
 var meter metric.Meter
 
@@ -113,11 +113,11 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 	var asyncModelPluginStatus chan pluginmanager.ModelStatus
 	if asyncCounter > 0 {
 		asyncModelPluginStatus = make(chan pluginmanager.ModelStatus, asyncCounter)
-		plugins.AddModelChannel(transactionID, t, asyncModelPluginStatus, "async")
+		pm.AddModelChannel(transactionID, t, asyncModelPluginStatus, "async")
 	}
 	if syncCounter > 0 {
 		modelPluginStatus = make(chan pluginmanager.ModelStatus, syncCounter)
-		plugins.AddModelChannel(transactionID, t, modelPluginStatus, "sync")
+		pm.AddModelChannel(transactionID, t, modelPluginStatus, "sync")
 	}
 
 	startTime := time.Now()
@@ -145,13 +145,13 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 		}
 		switch {
 		case conf.IsAsync(id):
-			go plugins.AddToQueue(id, transactionID, payload)
+			go pm.AddToQueue(id, transactionID, payload)
 		case conf.IsInTraining(id):
-			go plugins.ProcessTraining(id, transactionID, payload, t)
+			go pm.ProcessTraining(id, transactionID, payload, t)
 		case conf.IsRemote(id):
-			go plugins.AddToQueue(id, transactionID, payload)
+			go pm.AddToQueue(id, transactionID, payload)
 		default:
-			go plugins.Process(ctx, id, transactionID, payload, t, modelPluginStatus)
+			go pm.Process(ctx, id, transactionID, payload, t, modelPluginStatus)
 		}
 	}
 
@@ -205,7 +205,7 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 					break waitAsync
 				}
 			}
-			plugins.RemoveAsyncModelChannel(transactionID, t)
+			pm.RemoveAsyncModelChannel(transactionID, t)
 		}()
 	}
 
@@ -254,7 +254,7 @@ waitSync:
 func InitTransaction(transactionId string) {
 	coreLogger.Load().Debug("initializing transaction", waceapi.LogKeyTxID, transactionId)
 	analysisMap.Store(transactionId, &transactionSync{})
-	plugins.InitTransaction(transactionId)
+	pm.InitTransaction(transactionId)
 }
 
 // Analyze calls the model plugins with the given payload and models
@@ -292,7 +292,7 @@ func CheckTransaction(transactionID string, decisionPlugins []string, wafData wa
 	tSync.wg.Wait()
 
 	logger.Debug("models finished, checking results")
-	res, enabledPluginFound, err := plugins.CheckResult(transactionID, decisionPlugins, wafData)
+	res, enabledPluginFound, err := pm.CheckResult(transactionID, decisionPlugins, wafData)
 
 	if err == nil {
 		logger.Debug("transaction checked successfully", "block", res)
@@ -325,7 +325,7 @@ func CloseTransaction(transactionID string) {
 	}
 
 	value.(*transactionSync).wg.Wait()
-	plugins.CloseTransaction(transactionID)
+	pm.CloseTransaction(transactionID)
 	analysisMap.Delete(transactionID)
 }
 
@@ -352,7 +352,7 @@ func Reload(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) e
 		setCredentialHeaders(cs.CredentialHeaders)
 	}
 	meter = met
-	return plugins.Reload(met, l)
+	return pm.Reload(met, l)
 }
 
 // Init initializes the WACE core with the given metric meter and
@@ -381,7 +381,7 @@ func Init(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) err
 
 	logger.Debug("loading plugin manager")
 	// pass l, not the core logger: pluginmanager adds its own component attribute
-	plugins, err = pluginmanager.New(met, l)
+	pm, err = pluginmanager.New(met, l)
 	if err != nil {
 		return err
 	}
