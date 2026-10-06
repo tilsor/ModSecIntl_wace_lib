@@ -283,7 +283,8 @@ func TestPluginManagerReloadLogger(t *testing.T) {
 		t.Errorf("Process record not found in the new logger:\n%s", newOut.String())
 	}
 
-	// logged by the plugin manager: the transaction has no sync channels
+	pm.CloseTransaction(txID)
+	// logged by the plugin manager: the transaction was already closed
 	pm.CloseTransaction(txID)
 	if !hasRecord(t, newOut.String(), "transaction not found", "pluginmanager") {
 		t.Errorf("plugin manager record not found in the new logger:\n%s", newOut.String())
@@ -733,8 +734,7 @@ func TestPluginManagerReloadUnloadsRemovedPlugins(t *testing.T) {
 }
 
 // TestPluginManagerAddModelChannelAndClose exercises AddModelChannel (sync path)
-// and the CloseTransaction sync-cleanup branch, which only runs when
-// syncModelsChannels has an entry for the transaction.
+// and the CloseTransaction sync cleanup.
 func TestPluginManagerAddModelChannelAndClose(t *testing.T) {
 	config := []byte(baseConfig + "model_plugins:\n" + trivialPlugin)
 	pm := setupPluginManager(t, config)
@@ -744,15 +744,15 @@ func TestPluginManagerAddModelChannelAndClose(t *testing.T) {
 
 	ch := make(chan ModelStatus, 1)
 	pm.AddModelChannel(txID, configstore.Everything, ch, "sync")
+	if tx, ok := pm.loadSyncTx(txID); !ok || tx.channel(configstore.Everything) != ch {
+		t.Fatal("AddModelChannel should have stored the sync channel")
+	}
 
-	// CloseTransaction must clean up the maps without closing the channel.
+	// CloseTransaction must clean up the transaction without closing the channel.
 	pm.CloseTransaction(txID)
 
-	if _, ok := pm.syncModelsChannels.Load(txID); ok {
-		t.Error("CloseTransaction should have removed the transaction channels")
-	}
-	if _, ok := pm.results.Load(txID); ok {
-		t.Error("CloseTransaction should have removed the transaction results")
+	if _, ok := pm.loadSyncTx(txID); ok {
+		t.Error("CloseTransaction should have removed the transaction")
 	}
 
 	// A model plugin reporting after the transaction was closed (e.g.
@@ -766,6 +766,80 @@ func TestPluginManagerAddModelChannelAndClose(t *testing.T) {
 	case ch <- ModelStatus{ModelID: "trivial"}:
 	default:
 		t.Error("late send after CloseTransaction should not block")
+	}
+}
+
+// TestPluginManagerAsyncModelChannels verifies that the async channels
+// outlive CloseTransaction and that the transaction is removed along
+// with its last async channel.
+func TestPluginManagerAsyncModelChannels(t *testing.T) {
+	config := []byte(baseConfig + "model_plugins:\n" + trivialPlugin)
+	pm := setupPluginManager(t, config)
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	headers := make(chan ModelStatus, 1)
+	body := make(chan ModelStatus, 1)
+	pm.AddModelChannel(txID, configstore.RequestHeaders, headers, "async")
+	pm.AddModelChannel(txID, configstore.RequestBody, body, "async")
+	pm.CloseTransaction(txID)
+
+	if _, ok := pm.loadAsyncTx(txID); !ok {
+		t.Fatal("CloseTransaction should keep the async channels")
+	}
+	pm.RemoveAsyncModelChannel(txID, configstore.RequestHeaders)
+	tx, ok := pm.loadAsyncTx(txID)
+	if !ok {
+		t.Fatal("the transaction should stay while it has async channels")
+	}
+	if tx.channel(configstore.RequestHeaders) != nil {
+		t.Error("RemoveAsyncModelChannel should have removed the RequestHeaders channel")
+	}
+	if tx.channel(configstore.RequestBody) != body {
+		t.Error("RemoveAsyncModelChannel should keep the RequestBody channel")
+	}
+
+	pm.RemoveAsyncModelChannel(txID, configstore.RequestBody)
+	if _, ok := pm.loadAsyncTx(txID); ok {
+		t.Error("the transaction should be removed with its last async channel")
+	}
+
+	// A channel added after the removal must be reachable again.
+	pm.AddModelChannel(txID, configstore.ResponseHeaders, headers, "async")
+	if tx, ok := pm.loadAsyncTx(txID); !ok || tx.channel(configstore.ResponseHeaders) != headers {
+		t.Error("AddModelChannel after the removal should create the transaction again")
+	}
+	pm.RemoveAsyncModelChannel(txID, configstore.ResponseHeaders)
+}
+
+// TestPluginManagerAsyncModelChannelsConcurrent adds and removes async
+// channels of different types for the same transaction at the same
+// time. Every channel must be reachable between its add and its
+// remove, which fails if a remove takes the transaction out of
+// asyncTxs while an add puts a channel in it.
+func TestPluginManagerAsyncModelChannelsConcurrent(t *testing.T) {
+	config := []byte(baseConfig + "model_plugins:\n" + trivialPlugin)
+	pm := setupPluginManager(t, config)
+
+	txID := generateRandomID()
+	var wg sync.WaitGroup
+	for typ := configstore.RequestHeaders; typ <= configstore.Everything; typ++ {
+		wg.Go(func() {
+			ch := make(chan ModelStatus, 1)
+			for range 1000 {
+				pm.AddModelChannel(txID, typ, ch, "async")
+				if tx, ok := pm.loadAsyncTx(txID); !ok || tx.channel(typ) != ch {
+					t.Errorf("channel of type %v not reachable after AddModelChannel", typ)
+					return
+				}
+				pm.RemoveAsyncModelChannel(txID, typ)
+			}
+		})
+	}
+	wg.Wait()
+
+	if _, ok := pm.loadAsyncTx(txID); ok {
+		t.Error("the transaction should be removed once every async channel is")
 	}
 }
 
@@ -1412,12 +1486,14 @@ func TestPluginManagerModelTrainingFlag(t *testing.T) {
 	if status := <-ch; status.Err != nil {
 		t.Fatalf("Process: unexpected error: %v", status.Err)
 	}
-	results, _ := pm.results.Load(txID)
-	res, ok := results.(*sync.Map).Load("lifecycle")
+	tx, _ := pm.loadSyncTx(txID)
+	tx.mu.Lock()
+	res, ok := tx.results["lifecycle"]
+	tx.mu.Unlock()
 	if !ok {
 		t.Fatal("Process did not store the result")
 	}
-	if res.(waceapi.ModelResults).Data.(map[string]bool)["training"] {
+	if res.Data.(map[string]bool)["training"] {
 		t.Error("Process should call the plugin with ModelInput.Training = false")
 	}
 }
@@ -1710,13 +1786,13 @@ func TestPluginManagerModelTimeout(t *testing.T) {
 			if status := <-ch; status.Err != nil {
 				t.Fatalf("Process: unexpected error: %v", status.Err)
 			}
-			results, _ := pm.results.Load(txID)
-			res, ok := results.(*sync.Map).Load("deadline")
+			tx, _ := pm.loadSyncTx(txID)
+			tx.mu.Lock()
+			mr, ok := tx.results["deadline"]
+			tx.mu.Unlock()
 			if !ok {
 				t.Fatal("Process did not store the result")
 			}
-			mr := res.(waceapi.ModelResults)
-
 			if gotDeadline := mr.ProbAttack == 1; gotDeadline != tt.wantDeadline {
 				t.Fatalf("plugin context has deadline = %v, want %v", gotDeadline, tt.wantDeadline)
 			}
