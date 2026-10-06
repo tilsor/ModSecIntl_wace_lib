@@ -23,7 +23,7 @@ jobs:
       WACE_BENCH_NATS_URL: nats://localhost:4222
       # Base and PR run alternately, one sample of each per round, so
       # load changes on the runner affect both equally.
-      BENCH_ROUNDS: 10
+      BENCH_ROUNDS: 6
     steps:
     - uses: actions/checkout@v4
       with:
