@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"plugin"
 	"sync"
 	"sync/atomic"
@@ -53,19 +54,43 @@ type ModelStatus struct {
 	Err        error
 }
 
+// numPluginTypes is the number of model plugin types, used to index
+// the per-transaction channels by type.
+const numPluginTypes = configstore.Everything + 1
+
+// syncTx is the state of a transaction that lives from InitTransaction
+// to CloseTransaction: the results of its sync model plugins and the
+// channels its remote sync model plugins report on, one per plugin
+// type.
+type syncTx struct {
+	mu       sync.Mutex
+	results  map[string]waceapi.ModelResults
+	channels [numPluginTypes]chan ModelStatus
+}
+
+// asyncTx holds the channels the async model plugins of a transaction
+// report on, one per plugin type. It outlives CloseTransaction and is
+// removed together with its last channel.
+type asyncTx struct {
+	mu       sync.Mutex
+	channels [numPluginTypes]chan ModelStatus
+	count    int
+	// removed is set once the asyncTx is taken out of asyncTxs, so
+	// that AddModelChannel does not add a channel nobody can find.
+	removed bool
+}
+
 // PluginManager is the main plugin struct storing information of
 // every plugin execution.
 type PluginManager struct {
-	reloadMutex         sync.Mutex
-	modelPlugins        map[string]modelPluginData
-	modelMutex          sync.RWMutex
-	decisionPlugins     map[string]decisionPluginData
-	decisionMutex       sync.RWMutex
-	results             sync.Map
-	channelsMutex       sync.Mutex
-	syncModelsChannels  sync.Map
-	asyncModelsChannels sync.Map
-	natConn             *nats.Conn
+	reloadMutex     sync.Mutex
+	modelPlugins    map[string]modelPluginData
+	modelMutex      sync.RWMutex
+	decisionPlugins map[string]decisionPluginData
+	decisionMutex   sync.RWMutex
+	syncTxs         sync.Map
+	asyncTxs        sync.Map
+	natConn         *nats.Conn
 	// logger carries component=pluginmanager
 	logger atomic.Pointer[slog.Logger]
 	// baseLogger is the host logger without a component attribute
@@ -363,66 +388,114 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 	return nil
 }
 
+// loadSyncTx returns the sync state of the transaction with the given ID
+func (p *PluginManager) loadSyncTx(transactionId string) (*syncTx, bool) {
+	v, ok := p.syncTxs.Load(transactionId)
+	if !ok {
+		return nil, false
+	}
+	return v.(*syncTx), true
+}
+
+// loadAsyncTx returns the async channels of the transaction with the given ID
+func (p *PluginManager) loadAsyncTx(transactionId string) (*asyncTx, bool) {
+	v, ok := p.asyncTxs.Load(transactionId)
+	if !ok {
+		return nil, false
+	}
+	return v.(*asyncTx), true
+}
+
+// storeResult stores the results of the model plugin with id modelID
+func (tx *syncTx) storeResult(modelID string, res waceapi.ModelResults) {
+	tx.mu.Lock()
+	tx.results[modelID] = res
+	tx.mu.Unlock()
+}
+
+// channel returns the channel of the plugin type t, or nil if there is none
+func (tx *syncTx) channel(t configstore.ModelPluginType) chan ModelStatus {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	return tx.channels[t]
+}
+
+// channel returns the channel of the plugin type t, or nil if there is none
+func (tx *asyncTx) channel(t configstore.ModelPluginType) chan ModelStatus {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	return tx.channels[t]
+}
+
 // InitTransaction initializes the transaction with the given ID
 func (p *PluginManager) InitTransaction(transactionId string) {
-	p.results.Store(transactionId, new(sync.Map))
+	p.syncTxs.Store(transactionId, &syncTx{results: make(map[string]waceapi.ModelResults)})
 }
 
 // CloseTransaction closes the transaction with the given ID
-// removing all sync model data
+// removing all sync model data. The async model channels are kept
+// until RemoveAsyncModelChannel removes the last one.
 func (p *PluginManager) CloseTransaction(transactionId string) {
-	logger := p.getLogger().With(waceapi.LogKeyTxID, transactionId)
-	transactionMap, ok := p.syncModelsChannels.Load(transactionId)
-	if !ok {
-		logger.Error("transaction not found")
-	} else {
-		transactionMap.(*sync.Map).Range(func(key, value interface{}) bool {
-			transactionMap.(*sync.Map).Delete(key)
-			return true
-		})
-		p.syncModelsChannels.Delete(transactionId)
-		resultsMap, ok := p.results.Load(transactionId)
-		if !ok {
-			logger.Error("results for transaction not found")
-		} else {
-			resultsMap.(*sync.Map).Range(func(key, value interface{}) bool {
-				resultsMap.(*sync.Map).Delete(key)
-				return true
-			})
-		}
-		p.results.Delete(transactionId)
+	if _, ok := p.syncTxs.LoadAndDelete(transactionId); !ok {
+		p.getLogger().Error("transaction not found", waceapi.LogKeyTxID, transactionId)
 	}
 }
 
-// AddModelChannel adds a channel to result channel map
+// AddModelChannel adds the channel the model plugins of type t report
+// on. modelType is "sync" for sync model plugins, which needs the
+// transaction to be initialized, and anything else for async ones.
 func (p *PluginManager) AddModelChannel(transactionId string, t configstore.ModelPluginType, modelPlugStatus chan ModelStatus, modelType string) {
-	typeModel := new(sync.Map)
-	var value interface{}
-	if modelType == "sync" {
-		value, _ = p.syncModelsChannels.LoadOrStore(transactionId, typeModel)
-	} else {
-		value, _ = p.asyncModelsChannels.LoadOrStore(transactionId, typeModel)
+	if t < 0 || t >= numPluginTypes {
+		p.getLogger().Error("invalid model plugin type", waceapi.LogKeyTxID, transactionId, "type", int(t))
+		return
 	}
-	value.(*sync.Map).Store(t.String(), modelPlugStatus)
+	if modelType == "sync" {
+		tx, ok := p.loadSyncTx(transactionId)
+		if !ok {
+			p.getLogger().Error("transaction not found when trying to add sync model channel", waceapi.LogKeyTxID, transactionId)
+			return
+		}
+		tx.mu.Lock()
+		tx.channels[t] = modelPlugStatus
+		tx.mu.Unlock()
+		return
+	}
+	for {
+		// TODO: find a better flow for this
+		v, _ := p.asyncTxs.LoadOrStore(transactionId, &asyncTx{})
+		tx := v.(*asyncTx)
+		tx.mu.Lock()
+		if !tx.removed {
+			if tx.channels[t] == nil {
+				tx.count++
+			}
+			tx.channels[t] = modelPlugStatus
+			tx.mu.Unlock()
+			return
+		}
+		// RemoveAsyncModelChannel took it out of asyncTxs in the
+		// meantime: retry with a new one.
+		tx.mu.Unlock()
+	}
 }
 
-// RemoveModelChannel removes a channel from the result channel map
+// RemoveAsyncModelChannel removes the async channel of plugin type t,
+// and the async state of the transaction along with its last channel.
 func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t configstore.ModelPluginType) {
-	typeModel, ok := p.asyncModelsChannels.Load(transactionId)
-	if ok {
-		channelMap := typeModel.(*sync.Map)
-		channelMap.Delete(t.String())
-
-		remainChannels := 0
-		typeModel.(*sync.Map).Range(func(key, value interface{}) bool {
-			remainChannels++
-			return true
-		})
-		if remainChannels == 0 {
-			p.asyncModelsChannels.Delete(transactionId)
-		}
-	} else {
+	tx, ok := p.loadAsyncTx(transactionId)
+	if !ok {
 		p.getLogger().Error("transaction not found when trying to remove async model channel", waceapi.LogKeyTxID, transactionId)
+		return
+	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if t >= 0 && t < numPluginTypes && tx.channels[t] != nil {
+		tx.channels[t] = nil
+		tx.count--
+	}
+	if tx.count == 0 && !tx.removed {
+		tx.removed = true
+		p.asyncTxs.CompareAndDelete(transactionId, tx)
 	}
 }
 
@@ -489,12 +562,12 @@ func (p *PluginManager) Process(ctx context.Context, modelID, transactionID stri
 		return
 	}
 	// store the results
-	resultSyncMap, ok := p.results.Load(transactionID)
+	tx, ok := p.loadSyncTx(transactionID)
 	if !ok {
 		modelPlugStatus <- ModelStatus{ModelID: modelID, Err: fmt.Errorf("transaction results not found")}
 		return
 	}
-	resultSyncMap.(*sync.Map).Store(modelID, res)
+	tx.storeResult(modelID, res)
 	modelPlugStatus <- ModelStatus{ModelID: modelID, ProbAttack: res.ProbAttack, Err: nil}
 }
 
@@ -503,7 +576,7 @@ func (p *PluginManager) Process(ctx context.Context, modelID, transactionID stri
 func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, wafData waceapi.WAFData) (bool, bool, error) {
 	logger := p.getLogger().With(waceapi.LogKeyTxID, transactionID)
 
-	transactionResults, ok := p.results.Load(transactionID)
+	tx, ok := p.loadSyncTx(transactionID)
 	if !ok {
 		return false, false, fmt.Errorf("transaction results not found")
 	}
@@ -513,11 +586,11 @@ func (p *PluginManager) CheckResult(transactionID string, decisionIds []string, 
 		return false, false, nil
 	}
 
-	modelResultMap := make(map[string]waceapi.ModelResults)
-	transactionResults.(*sync.Map).Range(func(key, value interface{}) bool {
-		modelResultMap[key.(string)] = value.(waceapi.ModelResults)
-		return true
-	})
+	// The decision plugins get a copy: model plugins may still store
+	// results while they run.
+	tx.mu.Lock()
+	modelResultMap := maps.Clone(tx.results)
+	tx.mu.Unlock()
 
 	enabledPluginFound := false
 	result := false
@@ -611,35 +684,34 @@ func (p *PluginManager) ModelResultsHandler(modelID string) error {
 			if err != nil {
 				p.pluginLogger(modelID, modelKind).Error("failed to parse JSON results payload", "error", err)
 			} else {
-				var channel interface{}
+				pluginType := cs.ModelPlugins[modelID].PluginType
+				isAsync := cs.IsAsync(modelID)
+				var sTx *syncTx
+				var modelChannel chan ModelStatus
 				var ok bool
-				if cs.IsAsync(modelID) {
-					channel, ok = p.asyncModelsChannels.Load(data.TransactionId)
+				if isAsync {
+					var aTx *asyncTx
+					if aTx, ok = p.loadAsyncTx(data.TransactionId); ok {
+						modelChannel = aTx.channel(pluginType)
+					}
 				} else {
-					channel, ok = p.syncModelsChannels.Load(data.TransactionId)
+					if sTx, ok = p.loadSyncTx(data.TransactionId); ok {
+						modelChannel = sTx.channel(pluginType)
+					}
 				}
 				if !ok {
 					p.pluginLogger(modelID, modelKind).Error("transaction not found", waceapi.LogKeyTxID, data.TransactionId)
+				} else if modelChannel == nil {
+					p.pluginLogger(modelID, modelKind).Error("model channel not found", waceapi.LogKeyTxID, data.TransactionId)
 				} else {
-					modelChannel, ok := channel.(*sync.Map).Load(cs.ModelPlugins[modelID].PluginType.String())
-					if !ok {
-						p.pluginLogger(modelID, modelKind).Error("model channel not found", waceapi.LogKeyTxID, data.TransactionId)
+					if data.Error != "" {
+						p.notifyStatus(modelChannel, ModelStatus{ModelID: modelID, Err: fmt.Errorf("%s", data.Error)}, data.TransactionId)
 					} else {
-						if data.Error != "" {
-							p.notifyStatus(modelChannel.(chan ModelStatus), ModelStatus{ModelID: modelID, Err: fmt.Errorf("%s", data.Error)}, data.TransactionId)
-						} else {
-							if !cs.IsAsync(modelID) {
-								// store the results
-								resultSyncMap, ok := p.results.Load(data.TransactionId)
-								if !ok {
-									p.notifyStatus(modelChannel.(chan ModelStatus), ModelStatus{ModelID: modelID, Err: fmt.Errorf("transaction results not found")}, data.TransactionId)
-									return
-								}
-								modelResult := waceapi.ModelResults{ProbAttack: data.ProbAttack, Data: data.Data}
-								resultSyncMap.(*sync.Map).Store(modelID, modelResult)
-							}
-							p.notifyStatus(modelChannel.(chan ModelStatus), ModelStatus{ModelID: modelID, ProbAttack: data.ProbAttack, Err: nil}, data.TransactionId)
+						if !isAsync {
+							// store the results
+							sTx.storeResult(modelID, waceapi.ModelResults{ProbAttack: data.ProbAttack, Data: data.Data})
 						}
+						p.notifyStatus(modelChannel, ModelStatus{ModelID: modelID, ProbAttack: data.ProbAttack, Err: nil}, data.TransactionId)
 					}
 				}
 			}
