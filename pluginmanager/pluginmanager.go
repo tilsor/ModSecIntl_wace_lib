@@ -808,7 +808,7 @@ func (p *PluginManager) handleModelResult(modelID string, msg *nats.Msg) {
 	}
 	modelConf, found := cs.ModelPlugins[modelID]
 	if !found {
-		logger.Error("model plugin no longer configured", waceapi.LogKeyTxID, data.TransactionId)
+		logger.Debug("model plugin no longer configured", waceapi.LogKeyTxID, data.TransactionId)
 		return
 	}
 	pluginType := modelConf.PluginType
@@ -827,11 +827,11 @@ func (p *PluginManager) handleModelResult(modelID string, msg *nats.Msg) {
 		}
 	}
 	if !ok {
-		logger.Error("transaction not found", waceapi.LogKeyTxID, data.TransactionId)
+		logger.Debug("transaction not found", waceapi.LogKeyTxID, data.TransactionId)
 		return
 	}
 	if modelChannel == nil {
-		logger.Error("model channel not found", waceapi.LogKeyTxID, data.TransactionId)
+		logger.Warn("model channel not found", waceapi.LogKeyTxID, data.TransactionId)
 		return
 	}
 	if data.Error != "" {
