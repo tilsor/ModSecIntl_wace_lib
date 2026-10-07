@@ -296,7 +296,7 @@ func Analyze(modelsTypeAsString, transactionId string, payload waceapi.HTTPPaylo
 			logger.Error("invalid model plugin type", "type", modelsTypeAsString)
 			return err
 		}
-		logger.Debug("analyzing payload", "type", modelsTypeAsString, "payload", payload)
+		logger.Debug("analyzing payload", "type", modelsTypeAsString)
 		addTransactionAnalysis(transactionId)
 		go callPlugins(payload, models, modelsType, transactionId, logger)
 	}
