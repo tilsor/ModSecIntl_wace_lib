@@ -368,11 +368,16 @@ func BenchmarkTransactionRemote(b *testing.B) {
 			}
 			defer configstore.Clean()
 			for _, id := range models {
-				if err := pm.ModelProcessHandler(id, process); err != nil {
+				ph, err := pm.ModelProcessHandler(id, process)
+				if err != nil {
 					b.Fatalf("ModelProcessHandler: %v", err)
 				}
-				// ModelResultsHandler blocks forever
-				go pm.ModelResultsHandler(id)
+				defer ph.Stop()
+				rh, err := pm.ModelResultsHandler(id)
+				if err != nil {
+					b.Fatalf("ModelResultsHandler: %v", err)
+				}
+				defer rh.Stop()
 			}
 			// give the subscriptions time to reach the server
 			time.Sleep(100 * time.Millisecond)

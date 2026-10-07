@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -1835,5 +1837,220 @@ func TestPluginManagerDecisionTimeout(t *testing.T) {
 				t.Errorf("decision plugin context has deadline = %v, want %v", gotDeadline, tt.wantDeadline)
 			}
 		})
+	}
+}
+
+// testNatsURL returns the NATS server the NATS tests run against, given
+// in WACE_TEST_NATS_URL (e.g. nats://localhost:4222), and skips the test
+// when it is not set.
+func testNatsURL(t *testing.T) string {
+	t.Helper()
+	url := os.Getenv("WACE_TEST_NATS_URL")
+	if url == "" {
+		t.Skip("WACE_TEST_NATS_URL not set")
+	}
+	return url
+}
+
+// natsConfig returns a configuration using the NATS server at url with
+// the given model plugins, which may be empty.
+func natsConfig(url, models string) string {
+	conf := baseConfig + fmt.Sprintf("natsurl: %q\n", url)
+	if models != "" {
+		conf += "model_plugins:\n" + models
+	}
+	return conf
+}
+
+// natsTrivialConf returns a trivial.so entry with the given id and
+// plugin type, remote when remote is set.
+func natsTrivialConf(id, pluginType string, remote bool) string {
+	return fmt.Sprintf("  - id: %q\n    path: \"../testdata/plugins/model/trivial.so\"\n    plugin_type: %q\n    remote: %v\n", id, pluginType, remote)
+}
+
+// subscribeResults counts the messages on the results queue of modelID.
+func subscribeResults(t *testing.T, url, modelID string) *atomic.Int64 {
+	t.Helper()
+	nc, err := nats.Connect(url)
+	if err != nil {
+		t.Fatalf("nats.Connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+	var count atomic.Int64
+	if _, err := nc.Subscribe(modelID+"/results", func(*nats.Msg) { count.Add(1) }); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	return &count
+}
+
+// eventually fails the test if cond does not hold within a few seconds.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestModelProcessHandlerQueueGroup checks that two process handlers of
+// the same model share its messages instead of each handling all of
+// them.
+func TestModelProcessHandlerQueueGroup(t *testing.T) {
+	url := testNatsURL(t)
+	pm := setupPluginManager(t, []byte(natsConfig(url, "")))
+	modelID := generateRandomID()
+	results := subscribeResults(t, url, modelID)
+
+	var processed atomic.Int64
+	process := func(context.Context, waceapi.ModelInput) (waceapi.ModelResults, error) {
+		processed.Add(1)
+		return waceapi.ModelResults{}, nil
+	}
+	for range 2 {
+		h, err := pm.ModelProcessHandler(modelID, process)
+		if err != nil {
+			t.Fatalf("ModelProcessHandler: %v", err)
+		}
+		defer h.Stop()
+	}
+
+	const n = 100
+	for range n {
+		if err := pm.AddToQueue(modelID, generateRandomID(), waceapi.HTTPPayload{URI: "/test"}); err != nil {
+			t.Fatalf("AddToQueue: %v", err)
+		}
+	}
+	eventually(t, "the results", func() bool { return results.Load() == n })
+	// give a duplicated delivery time to show up
+	time.Sleep(100 * time.Millisecond)
+	if got := processed.Load(); got != n {
+		t.Errorf("processed %d messages, want %d", got, n)
+	}
+	if got := results.Load(); got != n {
+		t.Errorf("published %d results, want %d", got, n)
+	}
+}
+
+// TestNatsHandlerStopWaitsForInFlight checks that Stop returns only
+// after the message being processed finishes and its result is sent.
+func TestNatsHandlerStopWaitsForInFlight(t *testing.T) {
+	url := testNatsURL(t)
+	pm := setupPluginManager(t, []byte(natsConfig(url, "")))
+	modelID := generateRandomID()
+	results := subscribeResults(t, url, modelID)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	process := func(context.Context, waceapi.ModelInput) (waceapi.ModelResults, error) {
+		close(started)
+		<-release
+		return waceapi.ModelResults{}, nil
+	}
+	h, err := pm.ModelProcessHandler(modelID, process)
+	if err != nil {
+		t.Fatalf("ModelProcessHandler: %v", err)
+	}
+	if err := pm.AddToQueue(modelID, generateRandomID(), waceapi.HTTPPayload{URI: "/test"}); err != nil {
+		t.Fatalf("AddToQueue: %v", err)
+	}
+	<-started
+
+	stopped := make(chan error)
+	go func() { stopped <- h.Stop() }()
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while a message was being processed")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	if err := <-stopped; err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	eventually(t, "the result of the drained message", func() bool { return results.Load() == 1 })
+}
+
+// TestPluginManagerReloadNatsHandlers checks that Reload starts and
+// stops the NATS handlers of a model plugin that changes between local
+// and remote, and that the results are routed with the current
+// configuration.
+func TestPluginManagerReloadNatsHandlers(t *testing.T) {
+	url := testNatsURL(t)
+	modelID := generateRandomID()
+	pm := setupPluginManager(t, []byte(natsConfig(url, natsTrivialConf(modelID, "Everything", false))))
+	reload := func(models string) {
+		t.Helper()
+		applyConfig(t, natsConfig(url, models))
+		if err := pm.Reload(testMeter, discardLogger); err != nil {
+			t.Fatalf("Reload: %v", err)
+		}
+	}
+	handlers := func() (*NatsHandler, *NatsHandler) {
+		pm.modelMutex.RLock()
+		defer pm.modelMutex.RUnlock()
+		mp := pm.modelPlugins[modelID]
+		return mp.processHandler, mp.resultsHandler
+	}
+	// remoteRoundTrip sends a request of type t to the model and returns
+	// its status, or fails when none arrives.
+	remoteRoundTrip := func(pt configstore.ModelPluginType) ModelStatus {
+		t.Helper()
+		txID := generateRandomID()
+		pm.InitTransaction(txID)
+		defer pm.CloseTransaction(txID)
+		ch := make(chan ModelStatus, 1)
+		pm.AddModelChannel(txID, pt, ch, "sync")
+		if err := pm.AddToQueue(modelID, txID, waceapi.HTTPPayload{URI: "/test"}); err != nil {
+			t.Fatalf("AddToQueue: %v", err)
+		}
+		select {
+		case status := <-ch:
+			return status
+		case <-time.After(5 * time.Second):
+			t.Fatal("no result from the remote model plugin")
+			return ModelStatus{}
+		}
+	}
+
+	if ph, rh := handlers(); ph != nil || rh != nil {
+		t.Fatal("a local model plugin should have no NATS handlers")
+	}
+
+	// local → remote starts the handlers
+	reload(natsTrivialConf(modelID, "Everything", true))
+	ph, rh := handlers()
+	if ph == nil || rh == nil {
+		t.Fatal("Reload should start the NATS handlers of a model plugin that becomes remote")
+	}
+	if status := remoteRoundTrip(configstore.Everything); status.Err != nil {
+		t.Fatalf("remote result: %v", status.Err)
+	}
+
+	// a plugin type change is applied to the results already listened for
+	reload(natsTrivialConf(modelID, "RequestHeaders", true))
+	if ph2, rh2 := handlers(); ph2 != ph || rh2 != rh {
+		t.Error("Reload without a mode change should keep the NATS handlers")
+	}
+	if status := remoteRoundTrip(configstore.RequestHeaders); status.Err != nil {
+		t.Fatalf("remote result after the plugin type change: %v", status.Err)
+	}
+
+	// remote → local stops them
+	reload(natsTrivialConf(modelID, "Everything", false))
+	if ph, rh := handlers(); ph != nil || rh != nil {
+		t.Fatal("Reload should stop the NATS handlers of a model plugin that becomes local")
+	}
+
+	// removing a remote model plugin stops them as well
+	reload(natsTrivialConf(modelID, "Everything", true))
+	ph, _ = handlers()
+	reload("")
+	if ph.subs[0].IsValid() {
+		t.Error("Reload should stop the NATS handlers of a removed model plugin")
 	}
 }

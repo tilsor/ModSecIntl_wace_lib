@@ -7,10 +7,12 @@ package pluginmanager
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"plugin"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,6 +38,10 @@ type modelPluginData struct {
 	trainingChannel chan any
 	trainingCtx     context.Context
 	trainingCancel  context.CancelFunc
+	// processHandler and resultsHandler are the NATS handlers of an
+	// async or remote model plugin, nil otherwise.
+	processHandler *NatsHandler
+	resultsHandler *NatsHandler
 }
 
 // decisionPluginData is the struct that stores the decision plugin
@@ -229,31 +235,24 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 				logger.Error("cannot initialize plugin: init function returned a nil plugin", "function", modelInitFunctionName)
 				continue
 			}
+			mpData = modelPluginData{
+				pluginType:  data.PluginType,
+				modelPlugin: mp,
+			}
 			if conf.IsAsync(data.ID) || conf.IsRemote(data.ID) {
-				err := pm.ModelProcessHandler(data.ID, mp.Process)
-				if err != nil {
-					logger.Error("cannot start process handler", "error", err)
+				if err := pm.startHandlers(data.ID, &mpData); err != nil {
+					logger.Error("cannot start NATS handlers", "error", err)
 					if err := mp.Clean(); err != nil {
 						logger.Warn("cannot clean plugin", "error", err)
 					}
 					continue
 				}
-				go pm.ModelResultsHandler(data.ID)
 			}
-			var trainingChannel chan any
-			var trainingCtx context.Context
-			var trainingCancel context.CancelFunc
 			if conf.IsInTraining(data.ID) {
-				trainingChannel, trainingCtx, trainingCancel = pm.startTraining(data.ID, data.TrainingData, modelKind)
+				mpData.trainingChannel, mpData.trainingCtx, mpData.trainingCancel = pm.startTraining(data.ID, data.TrainingData, modelKind)
 			}
 			pm.modelMutex.Lock()
-			pm.modelPlugins[data.ID] = modelPluginData{
-				pluginType:      data.PluginType,
-				modelPlugin:     mp,
-				trainingChannel: trainingChannel,
-				trainingCtx:     trainingCtx,
-				trainingCancel:  trainingCancel,
-			}
+			pm.modelPlugins[data.ID] = mpData
 			pm.modelMutex.Unlock()
 			logger.Info("plugin loaded")
 		} else {
@@ -262,12 +261,29 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 				logger.Warn("cannot reload plugin", "error", err)
 				continue
 			}
+			changed := mpData.pluginType != data.PluginType
+			mpData.pluginType = data.PluginType
+			// start or stop the NATS handlers when the plugin changes
+			// between local and async or remote
+			usesNats := conf.IsAsync(data.ID) || conf.IsRemote(data.ID)
+			if usesNats && mpData.processHandler == nil {
+				if err := pm.startHandlers(data.ID, &mpData); err != nil {
+					logger.Error("cannot start NATS handlers", "error", err)
+				}
+				changed = true
+			} else if !usesNats && mpData.processHandler != nil {
+				pm.stopHandlers(data.ID, &mpData)
+				changed = true
+			}
 			if !conf.IsInTraining(data.ID) && mpData.trainingChannel != nil {
 				mpData.trainingCancel()
 				mpData.trainingChannel, mpData.trainingCtx, mpData.trainingCancel = nil, nil, nil
+				changed = true
 			} else if conf.IsInTraining(data.ID) && mpData.trainingChannel == nil {
 				mpData.trainingChannel, mpData.trainingCtx, mpData.trainingCancel = pm.startTraining(data.ID, data.TrainingData, modelKind)
-			} else {
+				changed = true
+			}
+			if !changed {
 				continue
 			}
 			pm.modelMutex.Lock()
@@ -286,6 +302,8 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 		if mp.trainingCancel != nil {
 			mp.trainingCancel()
 		}
+		// no message may reach the plugin once it is cleaned
+		pm.stopHandlers(id, &mp)
 		logger := pm.pluginLogger(id, modelKind)
 		if err := mp.modelPlugin.Clean(); err != nil {
 			logger.Warn("cannot clean plugin", "error", err)
@@ -670,119 +688,241 @@ func (p *PluginManager) notifyStatus(ch chan ModelStatus, status ModelStatus, tr
 	}
 }
 
-// ModelResultsHandler listens for messages on the model results queue
-func (p *PluginManager) ModelResultsHandler(modelID string) error {
-	cs, err := configstore.Get()
+// processWorkers is the number of messages each model process handler
+// handles in parallel.
+var processWorkers = runtime.GOMAXPROCS(0)
+
+// NatsHandler is a set of NATS subscriptions that handle their messages
+// inline, so that a finished drain means no message is being handled.
+type NatsHandler struct {
+	subs []*nats.Subscription
+	// conn is closed by Stop. It is nil when the subscriptions use a
+	// connection shared with other handlers.
+	conn *nats.Conn
+}
+
+// Stop drains the subscriptions, which handles the messages already
+// received, waits for the drain to finish and closes the handler's own
+// connection, if any.
+func (h *NatsHandler) Stop() error {
+	var errs []error
+	var closed []<-chan nats.SubStatus
+	for _, sub := range h.subs {
+		// registered before Drain so the closed status is not missed
+		ch := sub.StatusChanged(nats.SubscriptionClosed)
+		if err := sub.Drain(); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		closed = append(closed, ch)
+	}
+	// the channel gets the closed status, or is closed, once the last
+	// message callback has returned
+	for _, ch := range closed {
+		<-ch
+	}
+	if h.conn != nil {
+		// send the results of the drained messages before closing
+		if err := h.conn.Flush(); err != nil {
+			errs = append(errs, err)
+		}
+		h.conn.Close()
+	}
+	return errors.Join(errs...)
+}
+
+// startHandlers starts the NATS handlers of the async or remote model
+// plugin with id modelID.
+func (pm *PluginManager) startHandlers(modelID string, mpData *modelPluginData) error {
+	ph, err := pm.ModelProcessHandler(modelID, mpData.modelPlugin.Process)
 	if err != nil {
 		return err
 	}
+	rh, err := pm.ModelResultsHandler(modelID)
+	if err != nil {
+		if err := ph.Stop(); err != nil {
+			pm.pluginLogger(modelID, modelKind).Warn("cannot stop process handler", "error", err)
+		}
+		return err
+	}
+	mpData.processHandler, mpData.resultsHandler = ph, rh
+	return nil
+}
 
+// stopHandlers stops the NATS handlers of the model plugin with id
+// modelID, if it has any.
+func (pm *PluginManager) stopHandlers(modelID string, mpData *modelPluginData) {
+	logger := pm.pluginLogger(modelID, modelKind)
+	if mpData.processHandler != nil {
+		if err := mpData.processHandler.Stop(); err != nil {
+			logger.Warn("cannot stop process handler", "error", err)
+		}
+		mpData.processHandler = nil
+	}
+	if mpData.resultsHandler != nil {
+		if err := mpData.resultsHandler.Stop(); err != nil {
+			logger.Warn("cannot stop results handler", "error", err)
+		}
+		mpData.resultsHandler = nil
+	}
+}
+
+// ModelResultsHandler subscribes to the results queue of the model
+// plugin with id modelID.
+func (p *PluginManager) ModelResultsHandler(modelID string) (*NatsHandler, error) {
+	// Not a queue group: every wacecore instance must get every result,
+	// as only the one that sent the request has the transaction. The
+	// messages are handled inline, the work is short and never blocks.
 	sub, err := p.natConn.Subscribe(modelID+"/results", func(msg *nats.Msg) {
-		go func(msg nats.Msg) {
-			data := &ModelTransmitionResults{}
-			err := json.Unmarshal(msg.Data, data)
-			if err != nil {
-				p.pluginLogger(modelID, modelKind).Error("failed to parse JSON results payload", "error", err)
-			} else {
-				pluginType := cs.ModelPlugins[modelID].PluginType
-				isAsync := cs.IsAsync(modelID)
-				var sTx *syncTx
-				var modelChannel chan ModelStatus
-				var ok bool
-				if isAsync {
-					var aTx *asyncTx
-					if aTx, ok = p.loadAsyncTx(data.TransactionId); ok {
-						modelChannel = aTx.channel(pluginType)
-					}
-				} else {
-					if sTx, ok = p.loadSyncTx(data.TransactionId); ok {
-						modelChannel = sTx.channel(pluginType)
-					}
-				}
-				if !ok {
-					p.pluginLogger(modelID, modelKind).Error("transaction not found", waceapi.LogKeyTxID, data.TransactionId)
-				} else if modelChannel == nil {
-					p.pluginLogger(modelID, modelKind).Error("model channel not found", waceapi.LogKeyTxID, data.TransactionId)
-				} else {
-					if data.Error != "" {
-						p.notifyStatus(modelChannel, ModelStatus{ModelID: modelID, Err: fmt.Errorf("%s", data.Error)}, data.TransactionId)
-					} else {
-						if !isAsync {
-							// store the results
-							sTx.storeResult(modelID, waceapi.ModelResults{ProbAttack: data.ProbAttack, Data: data.Data})
-						}
-						p.notifyStatus(modelChannel, ModelStatus{ModelID: modelID, ProbAttack: data.ProbAttack, Err: nil}, data.TransactionId)
-					}
-				}
-			}
-		}(*msg)
+		p.handleModelResult(modelID, msg)
 	})
-
 	if err != nil {
 		p.pluginLogger(modelID, modelKind).Error("failed to subscribe to model results queue", "error", err)
-		return err
+		return nil, err
+	}
+	h := &NatsHandler{subs: []*nats.Subscription{sub}}
+	// make sure the server has the subscription before any request is sent
+	if err := p.natConn.Flush(); err != nil {
+		p.pluginLogger(modelID, modelKind).Error("failed to subscribe to model results queue", "error", err)
+		h.Stop()
+		return nil, err
 	}
 
 	p.pluginLogger(modelID, modelKind).Info("listening for messages on model results queue")
-
-	defer sub.Unsubscribe()
-	defer p.natConn.Drain()
-
-	select {}
-
+	return h, nil
 }
 
-// ModelProcessHandler listens for messages on the model queue
-func (p *PluginManager) ModelProcessHandler(modelId string, modelProcess func(context.Context, waceapi.ModelInput) (waceapi.ModelResults, error)) error {
+// handleModelResult notifies the result in msg to the transaction
+// waiting for it, using the configuration current at the time it
+// arrives.
+func (p *PluginManager) handleModelResult(modelID string, msg *nats.Msg) {
+	logger := p.pluginLogger(modelID, modelKind)
+	data := &ModelTransmitionResults{}
+	if err := json.Unmarshal(msg.Data, data); err != nil {
+		logger.Error("failed to parse JSON results payload", "error", err)
+		return
+	}
+	cs, err := configstore.Get()
+	if err != nil {
+		logger.Error("cannot get configuration", waceapi.LogKeyTxID, data.TransactionId, "error", err)
+		return
+	}
+	modelConf, found := cs.ModelPlugins[modelID]
+	if !found {
+		logger.Error("model plugin no longer configured", waceapi.LogKeyTxID, data.TransactionId)
+		return
+	}
+	pluginType := modelConf.PluginType
+	isAsync := cs.IsAsync(modelID)
+	var sTx *syncTx
+	var modelChannel chan ModelStatus
+	var ok bool
+	if isAsync {
+		var aTx *asyncTx
+		if aTx, ok = p.loadAsyncTx(data.TransactionId); ok {
+			modelChannel = aTx.channel(pluginType)
+		}
+	} else {
+		if sTx, ok = p.loadSyncTx(data.TransactionId); ok {
+			modelChannel = sTx.channel(pluginType)
+		}
+	}
+	if !ok {
+		logger.Error("transaction not found", waceapi.LogKeyTxID, data.TransactionId)
+		return
+	}
+	if modelChannel == nil {
+		logger.Error("model channel not found", waceapi.LogKeyTxID, data.TransactionId)
+		return
+	}
+	if data.Error != "" {
+		p.notifyStatus(modelChannel, ModelStatus{ModelID: modelID, Err: fmt.Errorf("%s", data.Error)}, data.TransactionId)
+		return
+	}
+	if !isAsync {
+		// store the results
+		sTx.storeResult(modelID, waceapi.ModelResults{ProbAttack: data.ProbAttack, Data: data.Data})
+	}
+	p.notifyStatus(modelChannel, ModelStatus{ModelID: modelID, ProbAttack: data.ProbAttack, Err: nil}, data.TransactionId)
+}
+
+// ModelProcessHandler subscribes to the queue of the model plugin with
+// id modelId, on its own connection, and publishes the results of
+// modelProcess on its results queue. It handles up to processWorkers
+// messages in parallel, one per subscription of the modelId queue
+// group, which also spreads the messages among every instance of the
+// model instead of each instance handling all of them.
+func (p *PluginManager) ModelProcessHandler(modelId string, modelProcess func(context.Context, waceapi.ModelInput) (waceapi.ModelResults, error)) (*NatsHandler, error) {
 	p.pluginLogger(modelId, modelKind).Info("starting model process handler")
 	cs, err := configstore.Get()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	nc, err := nats.Connect(cs.NatsURL)
 
 	if err != nil {
 		p.pluginLogger(modelId, modelKind).Error("failed to connect to NATS server", "nats.url", cs.NatsURL, "error", err)
-		return err
+		return nil, err
 	}
 
-	_, err = nc.Subscribe(modelId, func(msg *nats.Msg) {
-		go func(msg nats.Msg) {
-			data := &waceapi.ModelInput{}
-			err := json.Unmarshal(msg.Data, data)
-			if err != nil {
-				p.pluginLogger(modelId, modelKind).Error("failed to parse JSON input payload", "error", err)
-			} else {
-				// TODO: propagate the context of the request through NATS
-				ctx, cancel := pluginContext(context.Background(), cs.ModelPlugins[modelId].Timeout)
-				res, err := modelProcess(ctx, *data)
-				cancel()
-				modelResult := waceapi.ModelResults{ProbAttack: res.ProbAttack, Data: res.Data}
-				payloadToSend := &ModelTransmitionResults{
-					TransactionId: data.TransactionId,
-					ModelResults:  modelResult,
-				}
-				if err != nil {
-					payloadToSend.Error = err.Error()
-				}
+	h := &NatsHandler{conn: nc}
+	for range processWorkers {
+		sub, err := nc.QueueSubscribe(modelId, modelId, func(msg *nats.Msg) {
+			p.handleModelInput(modelId, nc, msg, modelProcess)
+		})
+		if err != nil {
+			p.pluginLogger(modelId, modelKind).Error("failed to subscribe to model queue", "error", err)
+			nc.Close()
+			return nil, err
+		}
+		h.subs = append(h.subs, sub)
+	}
+	// make sure the server has the subscriptions before returning
+	if err := nc.Flush(); err != nil {
+		p.pluginLogger(modelId, modelKind).Error("failed to subscribe to model queue", "error", err)
+		nc.Close()
+		return nil, err
+	}
 
-				jsonPayload, err := json.Marshal(payloadToSend)
+	p.pluginLogger(modelId, modelKind).Info("listening for messages on model queue", "workers", processWorkers)
+	return h, nil
+}
 
-				if err != nil {
-					p.pluginLogger(modelId, modelKind).Error("failed to encode JSON results payload", waceapi.LogKeyTxID, data.TransactionId, "error", err)
-				}
+// handleModelInput processes the input in msg with modelProcess and
+// publishes the results on nc, using the configuration current at the
+// time it arrives.
+func (p *PluginManager) handleModelInput(modelId string, nc *nats.Conn, msg *nats.Msg, modelProcess func(context.Context, waceapi.ModelInput) (waceapi.ModelResults, error)) {
+	logger := p.pluginLogger(modelId, modelKind)
+	data := &waceapi.ModelInput{}
+	if err := json.Unmarshal(msg.Data, data); err != nil {
+		logger.Error("failed to parse JSON input payload", "error", err)
+		return
+	}
+	var timeout time.Duration
+	if cs, err := configstore.Get(); err == nil {
+		timeout = cs.ModelPlugins[modelId].Timeout
+	} else {
+		logger.Warn("cannot get configuration, processing without timeout", waceapi.LogKeyTxID, data.TransactionId, "error", err)
+	}
+	// TODO: propagate the context of the request through NATS
+	ctx, cancel := pluginContext(context.Background(), timeout)
+	res, err := modelProcess(ctx, *data)
+	cancel()
+	modelResult := waceapi.ModelResults{ProbAttack: res.ProbAttack, Data: res.Data}
+	payloadToSend := &ModelTransmitionResults{
+		TransactionId: data.TransactionId,
+		ModelResults:  modelResult,
+	}
+	if err != nil {
+		payloadToSend.Error = err.Error()
+	}
 
-				nc.Publish(modelId+"/results", jsonPayload)
-			}
-		}(*msg)
-	})
+	jsonPayload, err := json.Marshal(payloadToSend)
 
 	if err != nil {
-		p.pluginLogger(modelId, modelKind).Error("failed to subscribe to model queue", "error", err)
-		return err
+		logger.Error("failed to encode JSON results payload", waceapi.LogKeyTxID, data.TransactionId, "error", err)
 	}
 
-	p.pluginLogger(modelId, modelKind).Info("listening for messages on model queue")
-	return nil
+	nc.Publish(modelId+"/results", jsonPayload)
 }
