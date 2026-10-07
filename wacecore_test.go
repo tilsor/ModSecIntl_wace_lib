@@ -1,11 +1,14 @@
 package wace
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -166,9 +169,8 @@ decision_plugins:
     decisionbalance: 0.1
 `)
 
-var configAsync = []byte(`---
-#The level of debug, the valid options are - ERRO, WARN, INFO, DEBUG
-
+// configAsync is completed with the nats_url line by asyncConfig.
+var configAsync = `
 #The model plugins configuration
 model_plugins:
   - id: "trivial"
@@ -185,7 +187,7 @@ decision_plugins:
     path: "testdata/plugins/decision/simple.so"
 #    waf_weight: 0.5
     decisionbalance: 0.1
-`)
+`
 
 var provider = metric.NewMeterProvider()
 var testMeter = provider.Meter("example-meter")
@@ -221,10 +223,9 @@ func TestAnalyze(t *testing.T) {
 		plugins     []string
 	}
 	tests := []struct {
-		name      string
-		config    []byte
-		steps     []step
-		postDelay time.Duration
+		name   string
+		config []byte
+		steps  []step
 	}{
 		{
 			name:   "request in parts",
@@ -257,12 +258,6 @@ func TestAnalyze(t *testing.T) {
 			},
 		},
 		{
-			name:      "request in parts async",
-			config:    configAsync,
-			steps:     []step{{"RequestHeaders", requestHeadersPayload, []string{"trivial", "trivial2"}}},
-			postDelay: 10 * time.Millisecond,
-		},
-		{
 			name:   "empty models list is a no-op",
 			config: configAllModels,
 			steps:  []step{},
@@ -292,10 +287,6 @@ func TestAnalyze(t *testing.T) {
 			}
 
 			CloseTransaction(transactionID)
-
-			if tt.postDelay > 0 {
-				time.Sleep(tt.postDelay)
-			}
 		})
 	}
 }
@@ -733,5 +724,163 @@ func TestCloseTransactionWaitsForPendingAnalysis(t *testing.T) {
 	case <-finished:
 	case <-time.After(time.Second):
 		t.Fatal("pending analysis goroutine never completed")
+	}
+}
+
+// TestReloadRejectsNatsURLChange checks that Reload rejects a nats_url
+// change and keeps the configuration.
+func TestReloadRejectsNatsURLChange(t *testing.T) {
+	if err := initialize(configParamWith("0.3")); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	defer configstore.Clean()
+
+	var newConf configstore.ConfigFileData
+	withNats := strings.Replace(string(configParamWith("0.8")), "---\n", "---\nnats_url: \"nats://localhost:4222\"\n", 1)
+	if err := yaml.Unmarshal([]byte(withNats), &newConf); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := Reload(testMeter, newConf, discardLogger); err == nil {
+		t.Fatal("Reload changing nats_url should return error")
+	}
+	cs, err := configstore.Get()
+	if err != nil {
+		t.Fatalf("configstore.Get: %v", err)
+	}
+	if cs.NatsURL != "" {
+		t.Errorf("rejected Reload changed nats_url to %q", cs.NatsURL)
+	}
+}
+
+// testNatsURL returns the NATS server the NATS tests run against, given
+// in WACE_TEST_NATS_URL (e.g. nats://localhost:4222), and skips the test
+// when it is not set.
+func testNatsURL(t *testing.T) string {
+	t.Helper()
+	url := os.Getenv("WACE_TEST_NATS_URL")
+	if url == "" {
+		t.Skip("WACE_TEST_NATS_URL not set")
+	}
+	return url
+}
+
+// countHandler is a slog handler that counts the records match accepts.
+type countHandler struct {
+	match func(slog.Record) bool
+	count *atomic.Int64
+}
+
+func (h countHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h countHandler) Handle(_ context.Context, r slog.Record) error {
+	if h.match(r) {
+		h.count.Add(1)
+	}
+	return nil
+}
+
+func (h countHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h countHandler) WithGroup(string) slog.Handler      { return h }
+
+// recordAttr returns the value of the attribute key of r, or "".
+func recordAttr(r slog.Record, key string) string {
+	var value string
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == key {
+			value = a.Value.String()
+			return false
+		}
+		return true
+	})
+	return value
+}
+
+// initializeWithLogger is initialize with the given logger.
+func initializeWithLogger(t *testing.T, configuration string, l *slog.Logger) {
+	t.Helper()
+	var aux configstore.ConfigFileData
+	if err := yaml.Unmarshal([]byte(configuration), &aux); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := Init(testMeter, aux, l); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+}
+
+// TestAnalyzeAsync checks that the results of the async model plugins
+// come back through NATS.
+func TestAnalyzeAsync(t *testing.T) {
+	url := testNatsURL(t)
+	var succeeded atomic.Int64
+	logger := slog.New(countHandler{
+		match: func(r slog.Record) bool {
+			return r.Message == "model plugin succeeded" && recordAttr(r, "plugin.mode") == "async"
+		},
+		count: &succeeded,
+	})
+	initializeWithLogger(t, fmt.Sprintf("---\nnats_url: %q\n", url)+configAsync, logger)
+	defer configstore.Clean()
+
+	txID := generateRandomID()
+	InitTransaction(txID)
+	if err := Analyze("RequestHeaders", txID, requestHeadersPayload, []string{"trivial", "trivial2"}); err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if _, _, err := CheckTransaction(txID, []string{"simple"}, waceapi.WAFData{}); err != nil {
+		t.Fatalf("CheckTransaction: %v", err)
+	}
+	CloseTransaction(txID)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for succeeded.Load() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("got %d async results, want 2", succeeded.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestAnalyzeRemoteSendFailure checks that a request that cannot be
+// sent to a remote model plugin fails right away instead of waiting
+// for the model timeout.
+func TestAnalyzeRemoteSendFailure(t *testing.T) {
+	url := testNatsURL(t)
+	var failed atomic.Int64
+	logger := slog.New(countHandler{
+		match: func(r slog.Record) bool {
+			return r.Message == "model plugin failed" && recordAttr(r, waceapi.LogKeyPlugin) == "remote"
+		},
+		count: &failed,
+	})
+	initializeWithLogger(t, fmt.Sprintf(`---
+nats_url: %q
+model_timeout: 30s
+model_plugins:
+  - id: "remote"
+    plugin_type: RequestBody
+    path: "testdata/plugins/model/trivial.so"
+    remote: true
+decision_plugins:
+  - id: "simple"
+    path: "testdata/plugins/decision/simple.so"
+`, url), logger)
+	defer configstore.Clean()
+
+	txID := generateRandomID()
+	InitTransaction(txID)
+	defer CloseTransaction(txID)
+	// larger than the default max_payload of the server (1MB)
+	payload := waceapi.HTTPPayload{RequestBody: strings.Repeat("a", 2<<20)}
+	if err := Analyze("RequestBody", txID, payload, []string{"remote"}); err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	// Analyze waits for the model plugins in the background: the
+	// failure must show up well before the model timeout
+	deadline := time.Now().Add(5 * time.Second)
+	for failed.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the send failure was not reported before the model timeout")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

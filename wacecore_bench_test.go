@@ -353,7 +353,7 @@ func BenchmarkTransactionRemote(b *testing.B) {
 		b.Run(fmt.Sprintf("models=%d", n), func(b *testing.B) {
 			run := benchTxCounter.Add(1)
 			var sb strings.Builder
-			fmt.Fprintf(&sb, "---\nnatsurl: %q\nmodel_plugins:\n", natsURL)
+			fmt.Fprintf(&sb, "---\nnats_url: %q\nmodel_plugins:\n", natsURL)
 			models := make([]string, n)
 			for i := range n {
 				// Handlers are never stopped, so every run (including
@@ -368,11 +368,16 @@ func BenchmarkTransactionRemote(b *testing.B) {
 			}
 			defer configstore.Clean()
 			for _, id := range models {
-				if err := pm.ModelProcessHandler(id, process); err != nil {
+				ph, err := pm.ModelProcessHandler(id, process)
+				if err != nil {
 					b.Fatalf("ModelProcessHandler: %v", err)
 				}
-				// ModelResultsHandler blocks forever
-				go pm.ModelResultsHandler(id)
+				defer ph.Stop()
+				rh, err := pm.ModelResultsHandler(id)
+				if err != nil {
+					b.Fatalf("ModelResultsHandler: %v", err)
+				}
+				defer rh.Stop()
 			}
 			// give the subscriptions time to reach the server
 			time.Sleep(100 * time.Millisecond)

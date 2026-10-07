@@ -128,7 +128,7 @@ func main() {
 YAML file:
 
 ```yaml
-natsurl: nats://localhost:4222    # only needed for async or remote models
+nats_url: nats://localhost:4222    # only needed for async or remote models
 credential_headers:               # headers masked when a model has sanitize: true
   - Authorization                 # (default Authorization, Cookie, Set-Cookie;
   - Cookie                        #  []: no header is masked)

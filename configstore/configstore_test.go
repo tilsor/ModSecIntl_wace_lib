@@ -435,6 +435,7 @@ func TestIsAsync(t *testing.T) {
 			defer Clean()
 
 			config := fmt.Sprintf(`---
+nats_url: "nats://localhost:4222"
 model_plugins:
   - id: "testplugin"
     path: "../testdata/plugins/model/trivial.so"
@@ -757,7 +758,7 @@ func TestNatsURL(t *testing.T) {
 		wantURL string
 	}{
 		{
-			name: "empty string when natsurl not set",
+			name: "empty string when nats_url not set",
 			config: `---
 `,
 			wantURL: "",
@@ -765,7 +766,7 @@ func TestNatsURL(t *testing.T) {
 		{
 			name: "stores custom URL",
 			config: `---
-natsurl: "nats.example.com:4222"
+nats_url: "nats.example.com:4222"
 `,
 			wantURL: "nats.example.com:4222",
 		},
@@ -909,5 +910,43 @@ func TestPluginTimeout(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestNatsURLRequired checks that async and remote model plugins are
+// rejected without nats_url.
+func TestNatsURLRequired(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		natsURL string
+		wantErr bool
+	}{
+		{name: "sync without nats_url", mode: "", natsURL: "", wantErr: false},
+		{name: "async without nats_url", mode: "async: true", natsURL: "", wantErr: true},
+		{name: "remote without nats_url", mode: "remote: true", natsURL: "", wantErr: true},
+		{name: "async with nats_url", mode: "async: true", natsURL: "nats://localhost:4222", wantErr: false},
+		{name: "remote with nats_url", mode: "remote: true", natsURL: "nats://localhost:4222", wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer Clean()
+			config := fmt.Sprintf(`---
+nats_url: %q
+model_plugins:
+  - id: "testplugin"
+    path: "../testdata/plugins/model/trivial.so"
+    plugin_type: "RequestHeaders"
+    %s
+`, tt.natsURL, tt.mode)
+			_, err := initialize([]byte(config))
+			if tt.wantErr && err == nil {
+				t.Fatal("expected an error, got none")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
