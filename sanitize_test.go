@@ -7,6 +7,9 @@ import (
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
 )
 
+// defaultHeaders mirrors the configstore default for credential_headers.
+var defaultHeaders = []string{"authorization", "cookie", "set-cookie"}
+
 func TestSanitizeCredentials(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -210,18 +213,37 @@ func TestSanitizeCredentials(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeCredentials(tt.input)
+			got := sanitizeCredentials(tt.input, defaultHeaders)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("SanitizeCredentials() = %+v, want %+v", got, tt.want)
+				t.Errorf("sanitizeCredentials() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestSetCredentialHeaders(t *testing.T) {
-	original := credentialHeaders
-	defer func() { credentialHeaders = original }()
+// TestSanitizeCredentialsDoesNotModifyInput checks that the caller's
+// payload is left intact: it is still sent unsanitized to the models that
+// do not ask for sanitization.
+func TestSanitizeCredentialsDoesNotModifyInput(t *testing.T) {
+	input := waceapi.HTTPPayload{
+		RequestHeaders:  []waceapi.HTTPHeader{{Key: "Authorization", Value: "Bearer token"}},
+		ResponseHeaders: []waceapi.HTTPHeader{{Key: "Set-Cookie", Value: "s=xyz"}},
+	}
+	want := waceapi.HTTPPayload{
+		RequestHeaders:  []waceapi.HTTPHeader{{Key: "Authorization", Value: "Bearer token"}},
+		ResponseHeaders: []waceapi.HTTPHeader{{Key: "Set-Cookie", Value: "s=xyz"}},
+	}
 
+	got := sanitizeCredentials(input, defaultHeaders)
+	if got.RequestHeaders[0].Value != credentialMask || got.ResponseHeaders[0].Value != credentialMask {
+		t.Fatalf("sanitizeCredentials() = %+v, want masked headers", got)
+	}
+	if !reflect.DeepEqual(input, want) {
+		t.Errorf("input modified: %+v, want %+v", input, want)
+	}
+}
+
+func TestSanitizeCredentialsCustomHeaders(t *testing.T) {
 	tests := []struct {
 		name    string
 		headers []string
@@ -241,7 +263,7 @@ func TestSetCredentialHeaders(t *testing.T) {
 			}},
 		},
 		{
-			name:    "input header name casing is normalized before matching",
+			name:    "header names are matched case-insensitively",
 			headers: []string{"X-API-KEY"},
 			input: waceapi.HTTPPayload{RequestHeaders: []waceapi.HTTPHeader{
 				{Key: "x-api-key", Value: "secret"},
@@ -276,10 +298,9 @@ func TestSetCredentialHeaders(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setCredentialHeaders(tt.headers)
-			got := sanitizeCredentials(tt.input)
+			got := sanitizeCredentials(tt.input, tt.headers)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("after SetCredentialHeaders(%v): sanitizeCredentials() = %+v, want %+v",
+				t.Errorf("sanitizeCredentials(%v) = %+v, want %+v",
 					tt.headers, got, tt.want)
 			}
 		})

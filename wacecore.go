@@ -85,6 +85,7 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 	syncCounter := 0
 	asyncCounter := 0
 	filteredModels := make([]string, 0, len(models))
+	shouldSanitize := false
 	for _, id := range models {
 		mp, ok := conf.ModelPlugins[id]
 		switch {
@@ -92,12 +93,14 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 			logger.Error("plugin not found",
 				waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
 				waceapi.LogKeyPlugin, id)
+			continue
 		case mp.PluginType != t:
 			logger.Error("wrong plugin type",
 				waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
 				waceapi.LogKeyPlugin, id,
 				"expected.type", t,
 			)
+			continue
 		case conf.IsAsync(id):
 			asyncCounter++
 			filteredModels = append(filteredModels, id)
@@ -106,6 +109,9 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 		default:
 			syncCounter++
 			filteredModels = append(filteredModels, id)
+		}
+		if !shouldSanitize && conf.ShouldSanitize(id) {
+			shouldSanitize = true
 		}
 	}
 
@@ -122,7 +128,10 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 
 	startTime := time.Now()
 
-	sanitizedPayload := sanitizeCredentials(input)
+	var sanitizedPayload waceapi.HTTPPayload
+	if shouldSanitize {
+		sanitizedPayload = sanitizeCredentials(input, conf.CredentialHeaders)
+	}
 
 	// A context without deadline never expires, so a zero timeout
 	// waits for every sync model plugin.
@@ -337,20 +346,18 @@ func Reload(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) e
 		l = slog.Default()
 	}
 
+	// This checks whether the ConfigStore is already initialized or not
 	_, err := configstore.Get()
 	if err != nil {
 		return err
 	}
 
-	cs, err := configstore.SetConfig(conf)
+	_, err = configstore.SetConfig(conf)
 	if err != nil {
 		return err
 	}
 	setLogger(l)
 
-	if len(cs.CredentialHeaders) != 0 {
-		setCredentialHeaders(cs.CredentialHeaders)
-	}
 	meter = met
 	return pm.Reload(met, l)
 }
@@ -368,13 +375,9 @@ func Init(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) err
 		return fmt.Errorf("wace: already initialized")
 	}
 
-	cs, err := configstore.SetConfig(conf)
+	_, err := configstore.SetConfig(conf)
 	if err != nil {
 		return err
-	}
-
-	if len(cs.CredentialHeaders) != 0 {
-		setCredentialHeaders(cs.CredentialHeaders)
 	}
 
 	meter = met
