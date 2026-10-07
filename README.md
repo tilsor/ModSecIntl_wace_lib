@@ -43,8 +43,8 @@ The `wace` package exports the following functions:
 
 | Function | Description |
 |---|---|
-| `Init(meter, conf, logger) error` | Initializes WACE with a configuration, an OpenTelemetry meter and a `*slog.Logger` (`nil` uses `slog.Default()`), and loads the plugins. Call it once, before anything else. |
-| `Reload(meter, conf, logger) error` | Applies a new configuration and logger (`nil` uses `slog.Default()`): reloads the params of existing plugins, loads new ones, and unloads the ones that were removed. |
+| `Init(meterProvider, conf, logger) error` | Initializes WACE with a configuration, an OpenTelemetry `metric.MeterProvider` (`nil` records no metrics) and a `*slog.Logger` (`nil` uses `slog.Default()`), and loads the plugins. Call it once, before anything else. |
+| `Reload(meterProvider, conf, logger) error` | Applies a new configuration, meter provider and logger (`nil` records no metrics / uses `slog.Default()`): reloads the params of existing plugins, loads new ones, and unloads the ones that were removed. |
 | `InitTransaction(id)` | Starts a transaction with the given identifier. Call it once per transaction. |
 | `Analyze(modelType, id, payload, models) error` | Runs the given model plugins on a part of the transaction. `modelType` is one of `RequestHeaders`, `RequestBody`, `AllRequest`, `ResponseHeaders`, `ResponseBody`, `AllResponse` or `Everything`. It returns immediately; the models run in the background. |
 | `CheckTransaction(id, decisionPlugins, wafData) (block, decided bool, err error)` | Waits for the sync models started so far (at most `model_timeout` per `Analyze` call, see [Timeouts](#timeouts)) and runs the given decision plugins. At most one of them may be a production plugin; the others must be in training. `block` is the verdict of the production plugin, and `decided` reports whether one was found. A call with only training plugins returns `block == false`. |
@@ -62,6 +62,37 @@ attribute: WACE adds `component=core`, `component=pluginmanager` or
 `component=plugin` itself. Records about a plugin carry `plugin.type` and
 `plugin.id`, and records about a transaction carry `tx_id` (the keys are the
 `waceapi.LogKey*` constants).
+
+### Metrics
+
+WACE records OpenTelemetry metrics with the `metric.MeterProvider` given to
+`Init` and replaced by `Reload`. The core metrics use the instrumentation scope
+`github.com/tilsor/ModSecIntl_wace_lib`:
+
+| Metric | Type | Unit | Attributes | Description |
+|---|---|---|---|---|
+| `wace.model.duration` | histogram | `s` | `model_id`, `model_mode` | Time from dispatching a payload to a model plugin until the core receives its result. |
+| `wace.model.attack_probability` | histogram | `1` | `model_id`, `model_mode` | Attack probability returned by a model plugin (buckets of 0.1). |
+| `wace.model.errors` | counter | `{call}` | `model_id`, `model_mode` | Model plugin calls that returned an error. |
+| `wace.model.timeouts` | counter | `{call}` | `model_mode` | Model plugin calls abandoned because `model_timeout` or `async_model_timeout` expired. |
+| `wace.transaction.checked` | counter | `{transaction}` | `blocked` | Transactions checked by the decision plugins. |
+
+`model_mode` is `sync` or `async`. Every attribute value comes from the
+configuration, so the number of series is bounded by the number of models.
+
+The plugin manager reports, with the scope
+`github.com/tilsor/ModSecIntl_wace_lib/pluginmanager`:
+
+| Metric | Type | Unit | Attributes | Description |
+|---|---|---|---|---|
+| `wace.plugins.loaded` | gauge | `{plugin}` | `plugin.type`, `plugin.mode` | Plugins currently loaded. |
+
+`plugin.mode` is `sync`, `async`, `remote` or `training` for model plugins,
+and `production` or `training` for decision plugins. Every combination is
+reported, with 0 when no plugin matches.
+Each plugin gets its own meter, with the scope
+`github.com/tilsor/ModSecIntl_wace_lib/plugin` and the scope attributes
+`plugin.type` and `plugin.id`.
 
 ### Example
 
@@ -90,9 +121,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	meter := noop.NewMeterProvider().Meter("wace")
+	// nil also records no metrics; pass the host's provider to export them
+	meterProvider := noop.NewMeterProvider()
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := wace.Init(meter, conf, logger); err != nil {
+	if err := wace.Init(meterProvider, conf, logger); err != nil {
 		log.Fatal(err)
 	}
 
@@ -234,7 +266,7 @@ type DecisionPlugin interface {
 ```go
 type PluginConfig struct {
 	Params map[string]string // params of the plugin ID in the configuration
-	Meter  metric.Meter      // OpenTelemetry meter of the host
+	Meter  metric.Meter      // OpenTelemetry meter of this plugin
 	Logger *slog.Logger      // already has component, plugin.type and plugin.id
 }
 ```
@@ -325,6 +357,9 @@ Rules:
   the instance keeps, and synchronize it (for example with `atomic.Pointer[slog.Logger]`), 
   because `Process` / `CheckResults` read it concurrently. Add `tx_id` (`waceapi.LogKeyTxID`) to
   records about a transaction.
+- Create metric instruments with `cfg.Meter` in `NewPlugin` (or `Reload`), not
+  on every call, and use only attribute values with a small, fixed set of
+  values: never request data or raw numbers such as a probability.
 - The context of `Process` / `CheckResults` carries the timeouts of the call
   (see [Timeouts](#timeouts)): stop and return `ctx.Err()` when it is
   cancelled. Pass it to any I/O the plugin does, such as HTTP or gRPC calls,

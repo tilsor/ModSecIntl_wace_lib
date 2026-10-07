@@ -189,8 +189,7 @@ decision_plugins:
     decisionbalance: 0.1
 `
 
-var provider = metric.NewMeterProvider()
-var testMeter = provider.Meter("example-meter")
+var testProvider = metric.NewMeterProvider()
 var discardLogger = slog.New(slog.DiscardHandler)
 
 func initialize(configuration []byte) error {
@@ -199,7 +198,7 @@ func initialize(configuration []byte) error {
 	if err != nil {
 		return err
 	}
-	err = Init(testMeter, aux, discardLogger)
+	err = Init(testProvider, aux, discardLogger)
 	if err != nil {
 		return err
 	}
@@ -370,7 +369,7 @@ func TestReloadBeforeInit(t *testing.T) {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
 
-	if err := Reload(testMeter, conf, discardLogger); err == nil {
+	if err := Reload(testProvider, conf, discardLogger); err == nil {
 		t.Error("Reload before Init should return error")
 	}
 	if _, err := configstore.Get(); err == nil {
@@ -391,7 +390,7 @@ model_plugins:
 	if err := yaml.Unmarshal(badConfig, &aux); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	err := Init(testMeter, aux, discardLogger)
+	err := Init(testProvider, aux, discardLogger)
 	configstore.Clean()
 	if err == nil {
 		t.Error("Init with nonexistent plugin path should return error")
@@ -624,7 +623,7 @@ model_plugins:
 	}
 	before := coreLogger.Load()
 	var out strings.Builder
-	if err := Reload(testMeter, badConf, slog.New(slog.NewJSONHandler(&out, nil))); err == nil {
+	if err := Reload(testProvider, badConf, slog.New(slog.NewJSONHandler(&out, nil))); err == nil {
 		t.Fatal("Reload with nonexistent plugin path should return error")
 	}
 	if coreLogger.Load() != before {
@@ -647,7 +646,7 @@ func TestReload(t *testing.T) {
 	if err := yaml.Unmarshal(configParamWith("0.8"), &newConf); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if err := Reload(testMeter, newConf, discardLogger); err != nil {
+	if err := Reload(testProvider, newConf, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -740,7 +739,7 @@ func TestReloadRejectsNatsURLChange(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(withNats), &newConf); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if err := Reload(testMeter, newConf, discardLogger); err == nil {
+	if err := Reload(testProvider, newConf, discardLogger); err == nil {
 		t.Fatal("Reload changing nats_url should return error")
 	}
 	cs, err := configstore.Get()
@@ -802,7 +801,7 @@ func initializeWithLogger(t *testing.T, configuration string, l *slog.Logger) {
 	if err := yaml.Unmarshal([]byte(configuration), &aux); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	if err := Init(testMeter, aux, l); err != nil {
+	if err := Init(testProvider, aux, l); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 }

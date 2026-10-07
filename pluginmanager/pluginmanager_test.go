@@ -105,8 +105,7 @@ var wrongCheckPlugin = `  - id: "wrong_check"
     decisionbalance: 0.5
 `
 
-var provider = metric.NewMeterProvider()
-var testMeter = provider.Meter("pluginmanager-test-meter")
+var testProvider = metric.NewMeterProvider()
 var discardLogger = slog.New(slog.DiscardHandler)
 
 // newDiscardPluginManager returns an empty PluginManager that discards its logs.
@@ -150,7 +149,7 @@ func setupPluginManagerWithLogger(t *testing.T, configuration []byte, logger *sl
 	if _, err := configstore.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig failed: %v", err)
 	}
-	pm, err := New(testMeter, logger)
+	pm, err := New(testProvider, logger)
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -266,7 +265,7 @@ func TestPluginManagerReloadLogger(t *testing.T) {
 	}
 	oldLen := len(oldOut.String())
 
-	if err := pm.Reload(testMeter, newLogger); err != nil {
+	if err := pm.Reload(testProvider, newLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	// logged by the trivial plugin with the logger received in Reload
@@ -541,7 +540,7 @@ func TestPluginManagerReload(t *testing.T) {
 	config := []byte(baseConfig + "model_plugins:\n" + trivialPlugin + "decision_plugins:\n" + simplePlugin)
 	pm := setupPluginManager(t, config)
 
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload() returned error: %v", err)
 	}
 
@@ -631,7 +630,7 @@ func TestPluginManagerReloadChangesOutput(t *testing.T) {
 		t.Fatalf("SetConfig with updated params: %v", err)
 	}
 
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -699,7 +698,7 @@ func TestPluginManagerSamePluginMultipleInstances(t *testing.T) {
 	check("param_b", 0.8)
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+paramInstanceConf("param_a", "0.5")+paramInstanceConf("param_b", "0.8"))
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -715,7 +714,7 @@ func TestPluginManagerReloadUnloadsRemovedPlugins(t *testing.T) {
 	pm := setupPluginManager(t, []byte(config))
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+trivialPlugin+"decision_plugins:\n"+simplePlugin)
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1019,7 +1018,7 @@ func TestPluginManagerTrainingReloadDisablesTraining(t *testing.T) {
 	if _, err := configstore.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1268,7 +1267,7 @@ func TestPluginManagerDecisionTrainingReloadDisables(t *testing.T) {
 	if _, err := configstore.SetConfig(aux); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1367,7 +1366,7 @@ func TestPluginManagerReloadCleansOnlyRemovedPlugins(t *testing.T) {
 	pm := setupPluginManager(t, []byte(config))
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+lifecycleModelConf("model_kept", keptModel, false))
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1397,7 +1396,7 @@ func TestPluginManagerReloadUnloadsEvenIfCleanFails(t *testing.T) {
 	pm := setupPluginManager(t, []byte(config))
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+trivialPlugin)
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1422,7 +1421,7 @@ func TestPluginManagerReloadUnloadCancelsTraining(t *testing.T) {
 	dp := pm.decisionPlugins["simple_training"]
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+trivial2Plugin)
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -1441,7 +1440,7 @@ func TestPluginManagerReloadInvalidParamsKeepsState(t *testing.T) {
 	pm := setupPluginManager(t, []byte(baseConfig+"model_plugins:\n"+paramInstanceConf("param", "0.3")))
 
 	applyConfig(t, baseConfig+"model_plugins:\n"+paramInstanceConf("param", "not-a-number"))
-	if err := pm.Reload(testMeter, discardLogger); err != nil {
+	if err := pm.Reload(testProvider, discardLogger); err != nil {
 		t.Fatalf("Reload should log plugin reload errors, not return them: %v", err)
 	}
 
@@ -1585,7 +1584,7 @@ func TestPluginManagerConcurrentReloadAndRequests(t *testing.T) {
 
 	ready.Wait()
 	for i := 0; i < 20; i++ {
-		if err := pm.Reload(testMeter, discardLogger); err != nil {
+		if err := pm.Reload(testProvider, discardLogger); err != nil {
 			t.Errorf("Reload: %v", err)
 		}
 	}
@@ -1649,7 +1648,7 @@ func TestPluginManagerReloadTrainingTransitions(t *testing.T) {
 			reload := func(config string) {
 				t.Helper()
 				applyConfig(t, config)
-				if err := pm.Reload(testMeter, discardLogger); err != nil {
+				if err := pm.Reload(testProvider, discardLogger); err != nil {
 					t.Fatalf("Reload: %v", err)
 				}
 			}
@@ -1997,7 +1996,7 @@ func TestPluginManagerReloadNatsHandlers(t *testing.T) {
 	reload := func(models string) {
 		t.Helper()
 		applyConfig(t, natsConfig(url, models))
-		if err := pm.Reload(testMeter, discardLogger); err != nil {
+		if err := pm.Reload(testProvider, discardLogger); err != nil {
 			t.Fatalf("Reload: %v", err)
 		}
 	}
