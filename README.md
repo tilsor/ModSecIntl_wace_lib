@@ -130,8 +130,8 @@ YAML file:
 ```yaml
 natsurl: nats://localhost:4222    # only needed for async or remote models
 credential_headers:               # headers masked when a model has sanitize: true
-  - Authorization
-  - Cookie
+  - Authorization                 # (default Authorization, Cookie, Set-Cookie;
+  - Cookie                        #  []: no header is masked)
 model_timeout: 200ms              # max wait for the sync models (default 200ms, 0s: no limit)
 async_model_timeout: 60s          # max wait for the async models (default 60s, 0s: no limit)
 

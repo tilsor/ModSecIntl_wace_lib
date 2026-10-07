@@ -148,6 +148,10 @@ func formBody(size int, withPassword bool) string {
 	return sb.String()
 }
 
+// benchCredentialHeaders mirrors the configstore default for
+// credential_headers.
+var benchCredentialHeaders = []string{"authorization", "cookie", "set-cookie"}
+
 // credentialHeadersPayload returns request headers that include the
 // default credential headers.
 func credentialHeadersPayload() []waceapi.HTTPHeader {
@@ -166,7 +170,7 @@ func BenchmarkSanitizeCredentials(b *testing.B) {
 		p := waceapi.HTTPPayload{URI: requestURI, RequestHeaders: credentialHeadersPayload()}
 		b.ReportAllocs()
 		for b.Loop() {
-			sanitizeCredentials(p)
+			sanitizeCredentials(p, benchCredentialHeaders)
 		}
 	})
 	for _, size := range benchBodySizes {
@@ -177,7 +181,7 @@ func BenchmarkSanitizeCredentials(b *testing.B) {
 				b.SetBytes(int64(len(p.RequestBody)))
 				b.ReportAllocs()
 				for b.Loop() {
-					sanitizeCredentials(p)
+					sanitizeCredentials(p, benchCredentialHeaders)
 				}
 			})
 		}

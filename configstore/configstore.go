@@ -115,6 +115,9 @@ type ConfigStore struct {
 	AsyncModelTimeout time.Duration
 }
 
+// defaultCredentialHeaders is used when credential_headers is not set in the config file
+var defaultCredentialHeaders = []string{"authorization", "cookie", "set-cookie"}
+
 // DefaultModelTimeout is used when model_timeout is not set in the
 // config file
 const DefaultModelTimeout = 200 * time.Millisecond
@@ -305,7 +308,11 @@ func SetConfig(inConf ConfigFileData) (*ConfigStore, error) {
 
 	cs.NatsURL = inConf.NatsURL
 
-	cs.CredentialHeaders = slices.Clone(inConf.CredentialHeaders)
+	if inConf.CredentialHeaders == nil {
+		cs.CredentialHeaders = slices.Clone(defaultCredentialHeaders)
+	} else {
+		cs.CredentialHeaders = slices.Clone(inConf.CredentialHeaders)
+	}
 
 	cs.ModelTimeout = DefaultModelTimeout
 	if inConf.ModelTimeout != nil {

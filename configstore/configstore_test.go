@@ -688,10 +688,24 @@ func TestCredentialHeaders(t *testing.T) {
 		wantHeaders []string
 	}{
 		{
-			name: "no credential_headers field defaults to nil",
+			name: "no credential_headers field uses the defaults",
 			config: `---
 `,
-			wantHeaders: nil,
+			wantHeaders: defaultCredentialHeaders,
+		},
+		{
+			name: "empty credential_headers field uses the defaults",
+			config: `---
+credential_headers:
+`,
+			wantHeaders: defaultCredentialHeaders,
+		},
+		{
+			name: "empty credential_headers list disables header sanitization",
+			config: `---
+credential_headers: []
+`,
+			wantHeaders: []string{},
 		},
 		{
 			name: "credential_headers values are stored",
@@ -717,6 +731,22 @@ credential_headers:
 				t.Errorf("CredentialHeaders = %v, want %v", cs.CredentialHeaders, tt.wantHeaders)
 			}
 		})
+	}
+}
+
+// TestCredentialHeadersDefaultsNotAliased checks that changing the stored
+// headers does not change the defaults used by later configurations.
+func TestCredentialHeadersDefaultsNotAliased(t *testing.T) {
+	defer Clean()
+
+	cs, err := initialize([]byte("---\n"))
+	if err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	cs.CredentialHeaders[0] = "changed"
+
+	if got := defaultCredentialHeaders[0]; got != "authorization" {
+		t.Errorf("defaultCredentialHeaders aliased: got %q", got)
 	}
 }
 
