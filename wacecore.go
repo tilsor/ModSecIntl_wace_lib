@@ -17,26 +17,11 @@ import (
 
 	"context"
 
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
 var pm *pluginmanager.PluginManager
 var ctx = context.Background()
-
-// coreMeter is the metric meter of the core. It is replaced by Init
-// and Reload while transactions may be reading it.
-var coreMeter atomic.Pointer[metric.Meter]
-
-// setMeter replaces the metric meter of the core.
-func setMeter(m metric.Meter) {
-	coreMeter.Store(&m)
-}
-
-// getMeter returns the metric meter of the core.
-func getMeter() metric.Meter {
-	return *coreMeter.Load()
-}
 
 // coreLogger is the logger of the core, with component=core. It is
 // replaced by Init and Reload.
@@ -206,20 +191,13 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 				logger.Debug("waiting for async model plugin", "index", i+1)
 				select {
 				case status := <-asyncModelPluginStatus:
+					getMetrics().recordModelResult(asyncCtx, status.ModelID, modeAsync, time.Since(startTime), status.ProbAttack, status.Err)
 					if status.Err == nil {
 						logger.Debug("model plugin succeeded",
 							waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
 							waceapi.LogKeyPlugin, status.ModelID,
 							"plugin.mode", "async",
 							"attack.probability", status.ProbAttack)
-						histogramMeter, err := getMeter().Int64Histogram("wace.model.duration.nanoseconds")
-						if err != nil {
-							logger.Warn("failed to record duration metric", "error", err)
-						}
-						histogramMeter.Record(ctx, time.Since(startTime).Nanoseconds(), metric.WithAttributes(
-							attribute.String("model_id", status.ModelID),
-							attribute.String("model_mode", "async"),
-							attribute.Float64("attack_probability", status.ProbAttack)))
 					} else {
 						logger.Warn("model plugin failed",
 							waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
@@ -228,6 +206,7 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 							"error", status.Err)
 					}
 				case <-asyncCtx.Done():
+					getMetrics().recordTimeouts(context.Background(), modeAsync, asyncCounter-i)
 					logger.Warn("plugin call aborted due to timeout",
 						"plugin.mode", "async",
 						"pending", asyncCounter-i,
@@ -246,21 +225,13 @@ waitSync:
 		logger.Debug("waiting for sync model plugin", "index", i+1)
 		select {
 		case status := <-modelPluginStatus:
+			getMetrics().recordModelResult(ctx, status.ModelID, modeSync, time.Since(startTime), status.ProbAttack, status.Err)
 			if status.Err == nil {
 				logger.Debug("model plugin succeeded",
 					waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
 					waceapi.LogKeyPlugin, status.ModelID,
 					"plugin.mode", "sync",
 					"attack.probability", status.ProbAttack)
-
-				histogramMeter, err := getMeter().Int64Histogram("wace.model.duration.nanoseconds")
-				if err != nil {
-					logger.Warn("failed to record duration metric", "error", err)
-				}
-				histogramMeter.Record(ctx, time.Since(startTime).Nanoseconds(), metric.WithAttributes(
-					attribute.String("model_id", status.ModelID),
-					attribute.String("model_mode", "sync"),
-					attribute.Float64("attack_probability", status.ProbAttack)))
 			} else {
 				logger.Warn("model plugin failed",
 					waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
@@ -269,6 +240,7 @@ waitSync:
 					"error", status.Err)
 			}
 		case <-ctx.Done():
+			getMetrics().recordTimeouts(context.Background(), modeSync, syncCounter-i)
 			logger.Warn("plugin call aborted due to timeout",
 				"plugin.mode", "sync",
 				"pending", syncCounter-i,
@@ -326,14 +298,7 @@ func CheckTransaction(transactionID string, decisionPlugins []string, wafData wa
 
 	if err == nil {
 		logger.Debug("transaction checked successfully", "block", res)
-
-		if res {
-			metric, err := getMeter().Int64Counter("wace.client.request.blocked.total", metric.WithDescription(fmt.Sprintf("%v", decisionPlugins)))
-			if err != nil {
-				logger.Warn("failed to record blocked request metric", "error", err)
-			}
-			metric.Add(ctx, 1)
-		}
+		getMetrics().recordChecked(ctx, res)
 	} else {
 		logger.Error("could not check transaction", "error", err)
 	}
@@ -359,13 +324,15 @@ func CloseTransaction(transactionID string) {
 	analysisMap.Delete(transactionID)
 }
 
-// Reload applies a new configuration and logger, and reloads all
-// plugins. If l is nil, slog.Default() is used. If the configuration is
-// rejected, the logger is not replaced either.
-func Reload(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) error {
+// Reload applies a new configuration, meter provider and logger, and
+// reloads all plugins. If mp is nil, metrics are not recorded. If l is
+// nil, slog.Default() is used. If the configuration is rejected, the
+// meter provider and the logger are not replaced either.
+func Reload(mp metric.MeterProvider, conf configstore.ConfigFileData, l *slog.Logger) error {
 	if l == nil {
 		l = slog.Default()
 	}
+	mp = meterProviderOrNoop(mp)
 
 	// This checks whether the ConfigStore is already initialized or not
 	current, err := configstore.Get()
@@ -378,22 +345,29 @@ func Reload(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) e
 		return fmt.Errorf("wace: nats_url cannot be changed on reload, from %q to %q", current.NatsURL, conf.NatsURL)
 	}
 
+	metrics, err := newCoreMetrics(mp)
+	if err != nil {
+		return err
+	}
+
 	_, err = configstore.SetConfig(conf)
 	if err != nil {
 		return err
 	}
 	setLogger(l)
 
-	setMeter(met)
-	return pm.Reload(met, l)
+	coreMetricsPtr.Store(metrics)
+	return pm.Reload(mp, l)
 }
 
-// Init initializes the WACE core with the given metric meter and
-// logger. If l is nil, slog.Default() is used.
-func Init(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) error {
+// Init initializes the WACE core with the given meter provider and
+// logger. If mp is nil, metrics are not recorded. If l is nil,
+// slog.Default() is used.
+func Init(mp metric.MeterProvider, conf configstore.ConfigFileData, l *slog.Logger) error {
 	if l == nil {
 		l = slog.Default()
 	}
+	mp = meterProviderOrNoop(mp)
 	setLogger(l)
 	logger := coreLogger.Load()
 
@@ -401,16 +375,21 @@ func Init(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) err
 		return fmt.Errorf("wace: already initialized")
 	}
 
-	_, err := configstore.SetConfig(conf)
+	metrics, err := newCoreMetrics(mp)
 	if err != nil {
 		return err
 	}
 
-	setMeter(met)
+	_, err = configstore.SetConfig(conf)
+	if err != nil {
+		return err
+	}
+
+	coreMetricsPtr.Store(metrics)
 
 	logger.Debug("loading plugin manager")
 	// pass l, not the core logger: pluginmanager adds its own component attribute
-	pm, err = pluginmanager.New(met, l)
+	pm, err = pluginmanager.New(mp, l)
 	if err != nil {
 		return err
 	}

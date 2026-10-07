@@ -19,7 +19,9 @@ import (
 
 	"github.com/tilsor/ModSecIntl_wace_lib/configstore"
 	"github.com/tilsor/ModSecIntl_wace_lib/waceapi"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/nats-io/nats.go"
 )
@@ -101,6 +103,9 @@ type PluginManager struct {
 	logger atomic.Pointer[slog.Logger]
 	// baseLogger is the host logger without a component attribute
 	baseLogger atomic.Pointer[slog.Logger]
+	// metricsReg is the callback of the observable instruments,
+	// replaced by Reload.
+	metricsReg metric.Registration
 }
 
 const (
@@ -113,7 +118,11 @@ const (
 
 // New creates a new PluginManager instance. The given logger must not
 // already carry a component attribute. If it is nil, slog.Default() is used.
-func New(meter metric.Meter, logger *slog.Logger) (*PluginManager, error) {
+// If provider is nil, plugins get a meter that records nothing.
+func New(provider metric.MeterProvider, logger *slog.Logger) (*PluginManager, error) {
+	if provider == nil {
+		provider = noop.NewMeterProvider()
+	}
 	pm := new(PluginManager)
 	pm.setLogger(logger)
 	conf, err := configstore.Get()
@@ -134,10 +143,14 @@ func New(meter metric.Meter, logger *slog.Logger) (*PluginManager, error) {
 	}
 
 	pm.modelPlugins = make(map[string]modelPluginData)
-	pm.loadModelPlugins(meter)
+	pm.loadModelPlugins(provider)
 
 	pm.decisionPlugins = make(map[string]decisionPluginData)
-	pm.loadDecisionPlugins(meter)
+	pm.loadDecisionPlugins(provider)
+
+	if err := pm.registerMetrics(provider); err != nil {
+		return nil, err
+	}
 
 	return pm, nil
 }
@@ -166,23 +179,37 @@ func (pm *PluginManager) pluginLogger(id string, kind pluginKind) *slog.Logger {
 }
 
 // Reload reloads the configuration for all already-loaded plugins and loads any
-// newly added plugins from the current configstore state.
-func (pm *PluginManager) Reload(meter metric.Meter, l *slog.Logger) error {
+// newly added plugins from the current configstore state. If provider
+// is nil, plugins get a meter that records nothing.
+func (pm *PluginManager) Reload(provider metric.MeterProvider, l *slog.Logger) error {
+	if provider == nil {
+		provider = noop.NewMeterProvider()
+	}
 	pm.reloadMutex.Lock()
 	defer pm.reloadMutex.Unlock()
 	pm.setLogger(l)
-	if err := pm.loadModelPlugins(meter); err != nil {
+	if err := pm.loadModelPlugins(provider); err != nil {
 		return err
 	}
-	return pm.loadDecisionPlugins(meter)
+	if err := pm.loadDecisionPlugins(provider); err != nil {
+		return err
+	}
+	return pm.registerMetrics(provider)
 }
 
+// pluginMeterScope is the instrumentation scope name of the meters
+// given to plugins.
+const pluginMeterScope = "github.com/tilsor/ModSecIntl_wace_lib/plugin"
+
 // pluginConfig builds the configuration passed to NewPlugin and Reload
-// of the plugin with the given id.
-func (pm *PluginManager) pluginConfig(id string, kind pluginKind, params map[string]string, meter metric.Meter) waceapi.PluginConfig {
+// of the plugin with the given id. The plugin gets its own meter, whose
+// scope carries the plugin.type and plugin.id attributes.
+func (pm *PluginManager) pluginConfig(id string, kind pluginKind, params map[string]string, provider metric.MeterProvider) waceapi.PluginConfig {
 	return waceapi.PluginConfig{
 		Params: params,
-		Meter:  meter,
+		Meter: provider.Meter(pluginMeterScope, metric.WithInstrumentationAttributes(
+			attribute.String(waceapi.LogKeyPluginType, kind.logValue()),
+			attribute.String(waceapi.LogKeyPlugin, id))),
 		Logger: pm.baseLogger.Load().With(waceapi.LogKeyComponent, "plugin",
 			waceapi.LogKeyPluginType, kind.logValue(),
 			waceapi.LogKeyPlugin, id),
@@ -197,7 +224,7 @@ func (pm *PluginManager) startTraining(id string, td configstore.TrainingData, k
 }
 
 // loadModelPlugins load new Plugins and reload their configuration if they previously existed
-func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
+func (pm *PluginManager) loadModelPlugins(provider metric.MeterProvider) error {
 	conf, err := configstore.Get()
 	if err != nil {
 		return err
@@ -226,7 +253,7 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 			}
 
 			// plugin initialization
-			mp, err := newPluginFunc(pm.pluginConfig(data.ID, modelKind, data.Params, meter))
+			mp, err := newPluginFunc(pm.pluginConfig(data.ID, modelKind, data.Params, provider))
 			if err != nil {
 				logger.Error("cannot initialize plugin", "error", err)
 				continue
@@ -256,7 +283,7 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 			pm.modelMutex.Unlock()
 			logger.Info("plugin loaded")
 		} else {
-			err = mpData.modelPlugin.Reload(pm.pluginConfig(data.ID, modelKind, data.Params, meter))
+			err = mpData.modelPlugin.Reload(pm.pluginConfig(data.ID, modelKind, data.Params, provider))
 			if err != nil {
 				logger.Warn("cannot reload plugin", "error", err)
 				continue
@@ -314,7 +341,7 @@ func (pm *PluginManager) loadModelPlugins(meter metric.Meter) error {
 }
 
 // loadDecisionPlugins load new Plugins and reload their configuration if they previously existed
-func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
+func (pm *PluginManager) loadDecisionPlugins(provider metric.MeterProvider) error {
 	conf, err := configstore.Get()
 	if err != nil {
 		return err
@@ -341,7 +368,7 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 			}
 
 			// plugin initialization
-			dp, err := newPluginFunc(pm.pluginConfig(data.ID, decisionKind, data.Params, meter))
+			dp, err := newPluginFunc(pm.pluginConfig(data.ID, decisionKind, data.Params, provider))
 			if err != nil {
 				logger.Error("cannot initialize plugin", "error", err)
 				continue
@@ -367,7 +394,7 @@ func (pm *PluginManager) loadDecisionPlugins(meter metric.Meter) error {
 			pm.decisionMutex.Unlock()
 			logger.Info("plugin loaded")
 		} else {
-			err = dpData.decisionPlugin.Reload(pm.pluginConfig(data.ID, decisionKind, data.Params, meter))
+			err = dpData.decisionPlugin.Reload(pm.pluginConfig(data.ID, decisionKind, data.Params, provider))
 			if err != nil {
 				logger.Warn("cannot reload plugin", "error", err)
 				continue
