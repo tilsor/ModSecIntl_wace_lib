@@ -517,20 +517,19 @@ func (p *PluginManager) RemoveAsyncModelChannel(transactionId string, t configst
 	}
 }
 
-// AddToQueue adds a payload to the model queue
-func (p *PluginManager) AddToQueue(modelID, transactionID string, payload waceapi.HTTPPayload) error {
-	payloadToSend := &waceapi.ModelInput{
+// EncodeModelInput encodes payload as the input of a model plugin
+// queue.
+func EncodeModelInput(transactionID string, payload waceapi.HTTPPayload) ([]byte, error) {
+	return json.Marshal(&waceapi.ModelInput{
 		TransactionId: transactionID,
 		Payload:       payload,
-	}
+	})
+}
 
-	jsonPayload, err := json.Marshal(payloadToSend)
-
-	if err != nil {
-		return err
-	}
-
-	return p.natConn.Publish(modelID, jsonPayload)
+// PublishModelInput sends an input encoded by EncodeModelInput to the
+// queue of the model plugin with id modelID.
+func (p *PluginManager) PublishModelInput(modelID string, input []byte) error {
+	return p.natConn.Publish(modelID, input)
 }
 
 // pluginContext returns the context passed to a plugin call: parent
@@ -918,11 +917,25 @@ func (p *PluginManager) handleModelInput(modelId string, nc *nats.Conn, msg *nat
 		payloadToSend.Error = err.Error()
 	}
 
-	jsonPayload, err := json.Marshal(payloadToSend)
-
-	if err != nil {
-		logger.Error("failed to encode JSON results payload", waceapi.LogKeyTxID, data.TransactionId, "error", err)
+	if err := publishResults(nc, modelId, payloadToSend); err != nil {
+		logger.Error("failed to send results", waceapi.LogKeyTxID, data.TransactionId, "error", err)
+		// let the transaction know now instead of at its timeout
+		errorPayload := &ModelTransmitionResults{
+			TransactionId: data.TransactionId,
+			Error:         fmt.Sprintf("cannot send the model plugin results: %v", err),
+		}
+		if err := publishResults(nc, modelId, errorPayload); err != nil {
+			logger.Error("failed to send results error", waceapi.LogKeyTxID, data.TransactionId, "error", err)
+		}
 	}
+}
 
-	nc.Publish(modelId+"/results", jsonPayload)
+// publishResults encodes results and sends them to the results queue of
+// the model plugin with id modelId.
+func publishResults(nc *nats.Conn, modelId string, results *ModelTransmitionResults) error {
+	jsonPayload, err := json.Marshal(results)
+	if err != nil {
+		return err
+	}
+	return nc.Publish(modelId+"/results", jsonPayload)
 }

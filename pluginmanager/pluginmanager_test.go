@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -854,7 +855,8 @@ func TestPluginManagerProcessAsyncPlugin(t *testing.T) {
 	pm := setupPluginManager(t, config)
 
 	// Update configstore to mark the plugin as async without reloading pm.
-	asyncConf := baseConfig + `model_plugins:
+	asyncConf := baseConfig + `nats_url: "nats://localhost:4222"
+model_plugins:
   - id: "trivial"
     path: "../testdata/plugins/model/trivial.so"
     plugin_type: "Everything"
@@ -1855,7 +1857,7 @@ func testNatsURL(t *testing.T) string {
 // natsConfig returns a configuration using the NATS server at url with
 // the given model plugins, which may be empty.
 func natsConfig(url, models string) string {
-	conf := baseConfig + fmt.Sprintf("natsurl: %q\n", url)
+	conf := baseConfig + fmt.Sprintf("nats_url: %q\n", url)
 	if models != "" {
 		conf += "model_plugins:\n" + models
 	}
@@ -1884,6 +1886,19 @@ func subscribeResults(t *testing.T, url, modelID string) *atomic.Int64 {
 		t.Fatalf("Flush: %v", err)
 	}
 	return &count
+}
+
+// addToQueue sends a request for transaction txID to the queue of the
+// model plugin with id modelID.
+func addToQueue(t *testing.T, pm *PluginManager, modelID, txID string) {
+	t.Helper()
+	input, err := EncodeModelInput(txID, waceapi.HTTPPayload{URI: "/test"})
+	if err != nil {
+		t.Fatalf("EncodeModelInput: %v", err)
+	}
+	if err := pm.PublishModelInput(modelID, input); err != nil {
+		t.Fatalf("PublishModelInput: %v", err)
+	}
 }
 
 // eventually fails the test if cond does not hold within a few seconds.
@@ -1922,9 +1937,7 @@ func TestModelProcessHandlerQueueGroup(t *testing.T) {
 
 	const n = 100
 	for range n {
-		if err := pm.AddToQueue(modelID, generateRandomID(), waceapi.HTTPPayload{URI: "/test"}); err != nil {
-			t.Fatalf("AddToQueue: %v", err)
-		}
+		addToQueue(t, pm, modelID, generateRandomID())
 	}
 	eventually(t, "the results", func() bool { return results.Load() == n })
 	// give a duplicated delivery time to show up
@@ -1956,9 +1969,7 @@ func TestNatsHandlerStopWaitsForInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ModelProcessHandler: %v", err)
 	}
-	if err := pm.AddToQueue(modelID, generateRandomID(), waceapi.HTTPPayload{URI: "/test"}); err != nil {
-		t.Fatalf("AddToQueue: %v", err)
-	}
+	addToQueue(t, pm, modelID, generateRandomID())
 	<-started
 
 	stopped := make(chan error)
@@ -2005,9 +2016,7 @@ func TestPluginManagerReloadNatsHandlers(t *testing.T) {
 		defer pm.CloseTransaction(txID)
 		ch := make(chan ModelStatus, 1)
 		pm.AddModelChannel(txID, pt, ch, "sync")
-		if err := pm.AddToQueue(modelID, txID, waceapi.HTTPPayload{URI: "/test"}); err != nil {
-			t.Fatalf("AddToQueue: %v", err)
-		}
+		addToQueue(t, pm, modelID, txID)
 		select {
 		case status := <-ch:
 			return status
@@ -2052,5 +2061,47 @@ func TestPluginManagerReloadNatsHandlers(t *testing.T) {
 	reload("")
 	if ph.subs[0].IsValid() {
 		t.Error("Reload should stop the NATS handlers of a removed model plugin")
+	}
+}
+
+// TestModelProcessHandlerResultsEncodeFailure checks that when the
+// results of a model plugin cannot be encoded the transaction gets an
+// error instead of waiting for its timeout.
+func TestModelProcessHandlerResultsEncodeFailure(t *testing.T) {
+	url := testNatsURL(t)
+	pm := setupPluginManager(t, []byte(natsConfig(url, "")))
+	modelID := generateRandomID()
+	// the results handler needs the model plugin configured, the
+	// handlers are started below with process instead of the plugin
+	applyConfig(t, natsConfig(url, natsTrivialConf(modelID, "Everything", true)))
+
+	// NaN cannot be encoded as JSON
+	process := func(context.Context, waceapi.ModelInput) (waceapi.ModelResults, error) {
+		return waceapi.ModelResults{ProbAttack: math.NaN()}, nil
+	}
+	ph, err := pm.ModelProcessHandler(modelID, process)
+	if err != nil {
+		t.Fatalf("ModelProcessHandler: %v", err)
+	}
+	defer ph.Stop()
+	rh, err := pm.ModelResultsHandler(modelID)
+	if err != nil {
+		t.Fatalf("ModelResultsHandler: %v", err)
+	}
+	defer rh.Stop()
+
+	txID := generateRandomID()
+	pm.InitTransaction(txID)
+	defer pm.CloseTransaction(txID)
+	ch := make(chan ModelStatus, 1)
+	pm.AddModelChannel(txID, configstore.Everything, ch, "sync")
+	addToQueue(t, pm, modelID, txID)
+	select {
+	case status := <-ch:
+		if status.Err == nil {
+			t.Error("results that cannot be encoded should be reported as an error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no status for results that cannot be encoded")
 	}
 }

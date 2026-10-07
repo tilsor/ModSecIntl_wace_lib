@@ -108,7 +108,7 @@ type decisionPluginConfig struct {
 type ConfigStore struct {
 	ModelPlugins      map[string]modelPluginConfig
 	DecisionPlugins   map[string]decisionPluginConfig
-	NatsURL           string
+	NatsURL           string `yaml:"nats_url"`
 	ApplicationId     string
 	CredentialHeaders []string
 	ModelTimeout      time.Duration
@@ -168,8 +168,8 @@ type configFileDecisionPlugin struct {
 type ConfigFileData struct {
 	ModelPlugins      []configFileModelPlugin    `yaml:"model_plugins"`
 	DecisionPlugins   []configFileDecisionPlugin `yaml:"decision_plugins"`
-	NatsURL           string
-	CredentialHeaders []string `yaml:"credential_headers"`
+	NatsURL           string                     `yaml:"nats_url"`
+	CredentialHeaders []string                   `yaml:"credential_headers"`
 	// nil value indicates that the default value must be used
 	// a 0 value indicates no timeout must be used
 	ModelTimeout      *time.Duration `yaml:"model_timeout"`
@@ -230,6 +230,9 @@ func checkConfig(inConf ConfigFileData) error {
 		}
 		if modelP.Training && modelP.Remote {
 			return fmt.Errorf("model %s: remote training mode is not supported", modelP.ID)
+		}
+		if (modelP.Async || modelP.Remote) && inConf.NatsURL == "" {
+			return fmt.Errorf("model %s: async and remote mode need nats_url to be set", modelP.ID)
 		}
 		if modelP.Training && (modelP.TrainingData.MaxSamples <= 0 || modelP.TrainingData.MinSamples < 0 ||
 			modelP.TrainingData.MaxSamples < modelP.TrainingData.MinSamples || modelP.TrainingData.MaxSamples < modelP.TrainingData.StatusUpdateInterval) {

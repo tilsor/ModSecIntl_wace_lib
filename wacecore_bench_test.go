@@ -353,7 +353,7 @@ func BenchmarkTransactionRemote(b *testing.B) {
 		b.Run(fmt.Sprintf("models=%d", n), func(b *testing.B) {
 			run := benchTxCounter.Add(1)
 			var sb strings.Builder
-			fmt.Fprintf(&sb, "---\nnatsurl: %q\nmodel_plugins:\n", natsURL)
+			fmt.Fprintf(&sb, "---\nnats_url: %q\nmodel_plugins:\n", natsURL)
 			models := make([]string, n)
 			for i := range n {
 				// Handlers are never stopped, so every run (including

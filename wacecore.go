@@ -23,7 +23,20 @@ import (
 
 var pm *pluginmanager.PluginManager
 var ctx = context.Background()
-var meter metric.Meter
+
+// coreMeter is the metric meter of the core. It is replaced by Init
+// and Reload while transactions may be reading it.
+var coreMeter atomic.Pointer[metric.Meter]
+
+// setMeter replaces the metric meter of the core.
+func setMeter(m metric.Meter) {
+	coreMeter.Store(&m)
+}
+
+// getMeter returns the metric meter of the core.
+func getMeter() metric.Meter {
+	return *coreMeter.Load()
+}
 
 // coreLogger is the logger of the core, with component=core. It is
 // replaced by Init and Reload.
@@ -144,21 +157,26 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 	}
 	defer cancel()
 
+	plainQueueInput := &queueInput{transactionID: transactionID, payload: input}
+	sanitizedQueueInput := &queueInput{transactionID: transactionID, payload: sanitizedPayload}
+
 	for _, id := range filteredModels {
 		logger.Debug("calling model plugin",
 			waceapi.LogKeyPluginType, waceapi.LogValueModelPluginType,
 			waceapi.LogKeyPlugin, id)
 		payload := input
+		queued := plainQueueInput
 		if conf.ShouldSanitize(id) {
 			payload = sanitizedPayload
+			queued = sanitizedQueueInput
 		}
 		switch {
 		case conf.IsAsync(id):
-			go pm.AddToQueue(id, transactionID, payload)
+			sendToQueue(id, queued, asyncModelPluginStatus)
 		case conf.IsInTraining(id):
 			go pm.ProcessTraining(id, transactionID, payload, t)
 		case conf.IsRemote(id):
-			go pm.AddToQueue(id, transactionID, payload)
+			sendToQueue(id, queued, modelPluginStatus)
 		default:
 			go pm.Process(ctx, id, transactionID, payload, t, modelPluginStatus)
 		}
@@ -166,6 +184,9 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 
 	// Without async model plugins there is nothing to wait for.
 	if asyncCounter > 0 {
+		// the plugin manager of this transaction, even if the goroutine
+		// outlives it
+		asyncPM := pm
 		go func() {
 			// The async plugins get their own context: the sync one is
 			// cancelled as soon as callPlugins returns.
@@ -191,7 +212,7 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 							waceapi.LogKeyPlugin, status.ModelID,
 							"plugin.mode", "async",
 							"attack.probability", status.ProbAttack)
-						histogramMeter, err := meter.Int64Histogram("wace.model.duration.nanoseconds")
+						histogramMeter, err := getMeter().Int64Histogram("wace.model.duration.nanoseconds")
 						if err != nil {
 							logger.Warn("failed to record duration metric", "error", err)
 						}
@@ -214,7 +235,7 @@ func callPlugins(input waceapi.HTTPPayload, models []string, t configstore.Model
 					break waitAsync
 				}
 			}
-			pm.RemoveAsyncModelChannel(transactionID, t)
+			asyncPM.RemoveAsyncModelChannel(transactionID, t)
 		}()
 	}
 
@@ -232,7 +253,7 @@ waitSync:
 					"plugin.mode", "sync",
 					"attack.probability", status.ProbAttack)
 
-				histogramMeter, err := meter.Int64Histogram("wace.model.duration.nanoseconds")
+				histogramMeter, err := getMeter().Int64Histogram("wace.model.duration.nanoseconds")
 				if err != nil {
 					logger.Warn("failed to record duration metric", "error", err)
 				}
@@ -307,7 +328,7 @@ func CheckTransaction(transactionID string, decisionPlugins []string, wafData wa
 		logger.Debug("transaction checked successfully", "block", res)
 
 		if res {
-			metric, err := meter.Int64Counter("wace.client.request.blocked.total", metric.WithDescription(fmt.Sprintf("%v", decisionPlugins)))
+			metric, err := getMeter().Int64Counter("wace.client.request.blocked.total", metric.WithDescription(fmt.Sprintf("%v", decisionPlugins)))
 			if err != nil {
 				logger.Warn("failed to record blocked request metric", "error", err)
 			}
@@ -347,9 +368,14 @@ func Reload(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) e
 	}
 
 	// This checks whether the ConfigStore is already initialized or not
-	_, err := configstore.Get()
+	current, err := configstore.Get()
 	if err != nil {
 		return err
+	}
+
+	// the NATS connection is only made by Init
+	if conf.NatsURL != current.NatsURL {
+		return fmt.Errorf("wace: nats_url cannot be changed on reload, from %q to %q", current.NatsURL, conf.NatsURL)
 	}
 
 	_, err = configstore.SetConfig(conf)
@@ -358,7 +384,7 @@ func Reload(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) e
 	}
 	setLogger(l)
 
-	meter = met
+	setMeter(met)
 	return pm.Reload(met, l)
 }
 
@@ -380,7 +406,7 @@ func Init(met metric.Meter, conf configstore.ConfigFileData, l *slog.Logger) err
 		return err
 	}
 
-	meter = met
+	setMeter(met)
 
 	logger.Debug("loading plugin manager")
 	// pass l, not the core logger: pluginmanager adds its own component attribute
