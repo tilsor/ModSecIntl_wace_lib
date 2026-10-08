@@ -42,7 +42,7 @@ func configWithSyncModels(n int) ([]byte, []string) {
 func runTransaction(b *testing.B, models []string, wafParams waceapi.WAFData) {
 	txID := "bench-" + strconv.FormatUint(benchTxCounter.Add(1), 10)
 	InitTransaction(txID)
-	if err := Analyze("RequestHeaders", txID, requestHeadersPayload, models); err != nil {
+	if err := Analyze(configstore.RequestHeaders, txID, requestHeadersPayload, models); err != nil {
 		b.Errorf("Analyze: %v", err)
 	}
 	if _, _, err := CheckTransaction(txID, []string{"simple"}, wafParams); err != nil {
@@ -230,7 +230,7 @@ func BenchmarkTransactionBodySize(b *testing.B) {
 				for b.Loop() {
 					txID := "bench-" + strconv.FormatUint(benchTxCounter.Add(1), 10)
 					InitTransaction(txID)
-					if err := Analyze("RequestBody", txID, payload, models); err != nil {
+					if err := Analyze(configstore.RequestBody, txID, payload, models); err != nil {
 						b.Errorf("Analyze: %v", err)
 					}
 					if _, _, err := CheckTransaction(txID, []string{"simple"}, wafParams); err != nil {
@@ -254,14 +254,14 @@ func BenchmarkTransactionPhases(b *testing.B) {
 	defer configstore.Clean()
 	wafParams := parseWAFParams("inbound_blocking=0,inbound_threshold=5")
 	phases := []struct {
-		pluginType string
+		pluginType configstore.ModelPluginType
 		model      string
 		payload    waceapi.HTTPPayload
 	}{
-		{"RequestHeaders", "trivialRequestHeaders", requestHeadersPayload},
-		{"RequestBody", "trivialRequestBody", wholeRequest},
-		{"ResponseHeaders", "trivialResponseHeaders", responseHeadersPayload},
-		{"ResponseBody", "trivialResponseBody", wholeResponse},
+		{configstore.RequestHeaders, "trivialRequestHeaders", requestHeadersPayload},
+		{configstore.RequestBody, "trivialRequestBody", wholeRequest},
+		{configstore.ResponseHeaders, "trivialResponseHeaders", responseHeadersPayload},
+		{configstore.ResponseBody, "trivialResponseBody", wholeResponse},
 	}
 
 	b.ReportAllocs()
@@ -317,7 +317,7 @@ func BenchmarkCheckTransaction(b *testing.B) {
 				txID := "bench-" + strconv.FormatUint(benchTxCounter.Add(1), 10)
 				InitTransaction(txID)
 				defer CloseTransaction(txID)
-				if err := Analyze("RequestHeaders", txID, requestHeadersPayload, models); err != nil {
+				if err := Analyze(configstore.RequestHeaders, txID, requestHeadersPayload, models); err != nil {
 					b.Fatalf("Analyze: %v", err)
 				}
 				if _, found, err := CheckTransaction(txID, []string{decision}, wafParams); err != nil || !found {

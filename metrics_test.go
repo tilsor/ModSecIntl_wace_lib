@@ -29,7 +29,7 @@ func runParamTransaction(t *testing.T) {
 	txID := generateRandomID()
 	InitTransaction(txID)
 	defer CloseTransaction(txID)
-	if err := Analyze("Everything", txID, waceapi.HTTPPayload{URI: "/test"}, []string{"param"}); err != nil {
+	if err := Analyze(configstore.Everything, txID, waceapi.HTTPPayload{URI: "/test"}, []string{"param"}); err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
 	if _, _, err := CheckTransaction(txID, []string{"simple"}, waceapi.WAFData{}); err != nil {

@@ -48,6 +48,11 @@ func (t ModelPluginType) String() string {
 	}
 }
 
+// IsValid reports whether t is one of the defined model plugin types
+func (t ModelPluginType) IsValid() bool {
+	return t >= RequestHeaders && t <= Everything
+}
+
 // StringToPluginType converts a string to the corresponding model plugin type
 func StringToPluginType(textType string) (ModelPluginType, error) {
 	switch textType {

@@ -260,15 +260,14 @@ func InitTransaction(transactionId string) {
 }
 
 // Analyze calls the model plugins with the given payload and models
-func Analyze(modelsTypeAsString, transactionId string, payload waceapi.HTTPPayload, models []string) error {
+func Analyze(modelsType configstore.ModelPluginType, transactionId string, payload waceapi.HTTPPayload, models []string) error {
 	if len(models) > 0 {
 		logger := coreLogger.Load().With(waceapi.LogKeyTxID, transactionId)
-		modelsType, err := configstore.StringToPluginType(modelsTypeAsString)
-		if err != nil {
-			logger.Error("invalid model plugin type", "type", modelsTypeAsString)
-			return err
+		if !modelsType.IsValid() {
+			logger.Error("invalid model plugin type", "type", int(modelsType))
+			return fmt.Errorf("invalid plugin type %d", modelsType)
 		}
-		logger.Debug("analyzing payload", "type", modelsTypeAsString)
+		logger.Debug("analyzing payload", "type", modelsType.String())
 		addTransactionAnalysis(transactionId)
 		go callPlugins(payload, models, modelsType, transactionId, logger)
 	}
