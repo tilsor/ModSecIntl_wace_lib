@@ -46,7 +46,7 @@ The `wace` package exports the following functions:
 | `Init(meterProvider, conf, logger) error` | Initializes WACE with a configuration, an OpenTelemetry `metric.MeterProvider` (`nil` records no metrics) and a `*slog.Logger` (`nil` uses `slog.Default()`), and loads the plugins. Call it once, before anything else. |
 | `Reload(meterProvider, conf, logger) error` | Applies a new configuration, meter provider and logger (`nil` records no metrics / uses `slog.Default()`): reloads the params of existing plugins, loads new ones, and unloads the ones that were removed. |
 | `InitTransaction(id)` | Starts a transaction with the given identifier. Call it once per transaction. |
-| `Analyze(modelType, id, payload, models) error` | Runs the given model plugins on a part of the transaction. `modelType` is one of `RequestHeaders`, `RequestBody`, `AllRequest`, `ResponseHeaders`, `ResponseBody`, `AllResponse` or `Everything`. It returns immediately; the models run in the background. |
+| `Analyze(modelType, id, payload, models) error` | Runs the given model plugins on a part of the transaction. `modelType` is a `configstore.ModelPluginType`: one of `configstore.RequestHeaders`, `RequestBody`, `AllRequest`, `ResponseHeaders`, `ResponseBody`, `AllResponse` or `Everything`. It returns immediately; the models run in the background. |
 | `CheckTransaction(id, decisionPlugins, wafData) (block, decided bool, err error)` | Waits for the sync models started so far (at most `model_timeout` per `Analyze` call, see [Timeouts](#timeouts)) and runs the given decision plugins. At most one of them may be a production plugin; the others must be in training. `block` is the verdict of the production plugin, and `decided` reports whether one was found. A call with only training plugins returns `block == false`. |
 | `CloseTransaction(id)` | Ends the transaction and releases its data. Call it once, when the analysis is complete. |
 
@@ -138,7 +138,7 @@ func main() {
 		HTTPVersion:    "HTTP/1.1",
 		RequestHeaders: []waceapi.HTTPHeader{{Key: "Host", Value: "example.com"}},
 	}
-	if err := wace.Analyze("RequestHeaders", txID, payload, []string{"model_app_a"}); err != nil {
+	if err := wace.Analyze(configstore.RequestHeaders, txID, payload, []string{"model_app_a"}); err != nil {
 		log.Fatal(err)
 	}
 

@@ -217,7 +217,7 @@ func generateRandomID() string {
 
 func TestAnalyze(t *testing.T) {
 	type step struct {
-		payloadType string
+		payloadType configstore.ModelPluginType
 		payload     waceapi.HTTPPayload
 		plugins     []string
 	}
@@ -230,30 +230,30 @@ func TestAnalyze(t *testing.T) {
 			name:   "request in parts",
 			config: configAllModels,
 			steps: []step{
-				{"RequestHeaders", requestHeadersPayload, []string{"trivialRequestHeaders"}},
-				{"RequestBody", waceapi.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
+				{configstore.RequestHeaders, requestHeadersPayload, []string{"trivialRequestHeaders"}},
+				{configstore.RequestBody, waceapi.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
 			},
 		},
 		{
 			name:   "whole request",
 			config: configAllModels,
 			steps: []step{
-				{"AllRequest", wholeRequest, []string{"trivialAllRequest"}},
+				{configstore.AllRequest, wholeRequest, []string{"trivialAllRequest"}},
 			},
 		},
 		{
 			name:   "response in parts",
 			config: configAllModels,
 			steps: []step{
-				{"ResponseHeaders", responseHeadersPayload, []string{"trivialResponseHeaders"}},
-				{"ResponseBody", waceapi.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
+				{configstore.ResponseHeaders, responseHeadersPayload, []string{"trivialResponseHeaders"}},
+				{configstore.ResponseBody, waceapi.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
 			},
 		},
 		{
 			name:   "whole response",
 			config: configAllModels,
 			steps: []step{
-				{"AllResponse", wholeResponse, []string{"trivialAllResponse"}},
+				{configstore.AllResponse, wholeResponse, []string{"trivialAllResponse"}},
 			},
 		},
 		{
@@ -310,7 +310,7 @@ func TestCheckAttackTransaction(t *testing.T) {
 
 	wafParams := parseWAFParams("COMBINED_SCORE=0,HTTP=0,LFI=0,PHPI=0,RCE=0,RFI=0,SESS=0,SQLI=0,XSS=0,inbound_blocking=20,inbound_detection=0,inbound_per_pl=0-0-0-0,inbound_threshold=5,outbound_blocking=0,outbound_detection=0,outbound_per_pl=0-0-0-0,outbound_threshold=4,phase=2")
 
-	err = Analyze("RequestHeaders", transactionID, requestHeadersPayload, []string{"trivial", "trivial2", "trivial3"})
+	err = Analyze(configstore.RequestHeaders, transactionID, requestHeadersPayload, []string{"trivial", "trivial2", "trivial3"})
 	if err != nil {
 		t.Errorf("Error: Analyze RequestHeaders: %s", err.Error())
 	}
@@ -337,7 +337,7 @@ func TestAnalyzeInvalidType(t *testing.T) {
 	InitTransaction(transactionID)
 	defer CloseTransaction(transactionID)
 
-	err = Analyze("InvalidType", transactionID, requestHeadersPayload, []string{"trivialRequestHeaders"})
+	err = Analyze(configstore.ModelPluginType(-1), transactionID, requestHeadersPayload, []string{"trivialRequestHeaders"})
 	if err == nil {
 		t.Errorf("Analyze with invalid type should return error")
 	}
@@ -494,7 +494,7 @@ func TestCheckTransactionResult(t *testing.T) {
 			defer CloseTransaction(txID)
 
 			if len(tt.models) > 0 {
-				if err := Analyze("RequestHeaders", txID, requestHeadersPayload, tt.models); err != nil {
+				if err := Analyze(configstore.RequestHeaders, txID, requestHeadersPayload, tt.models); err != nil {
 					t.Fatalf("Analyze: %v", err)
 				}
 			}
@@ -522,14 +522,14 @@ func TestAnalyzeMultiPhase(t *testing.T) {
 	defer CloseTransaction(txID)
 
 	phases := []struct {
-		payloadType string
+		payloadType configstore.ModelPluginType
 		payload     waceapi.HTTPPayload
 		models      []string
 	}{
-		{"RequestHeaders", requestHeadersPayload, []string{"trivialRequestHeaders"}},
-		{"RequestBody", waceapi.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
-		{"ResponseHeaders", responseHeadersPayload, []string{"trivialResponseHeaders"}},
-		{"ResponseBody", waceapi.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
+		{configstore.RequestHeaders, requestHeadersPayload, []string{"trivialRequestHeaders"}},
+		{configstore.RequestBody, waceapi.HTTPPayload{RequestBody: requestBody}, []string{"trivialRequestBody"}},
+		{configstore.ResponseHeaders, responseHeadersPayload, []string{"trivialResponseHeaders"}},
+		{configstore.ResponseBody, waceapi.HTTPPayload{ResponseBody: responseBody}, []string{"trivialResponseBody"}},
 	}
 
 	for _, p := range phases {
@@ -561,7 +561,7 @@ func TestConcurrentTransactions(t *testing.T) {
 			txID := generateRandomID()
 			InitTransaction(txID)
 
-			if err := Analyze("RequestHeaders", txID, requestHeadersPayload, []string{"trivial", "trivial2"}); err != nil {
+			if err := Analyze(configstore.RequestHeaders, txID, requestHeadersPayload, []string{"trivial", "trivial2"}); err != nil {
 				errs <- fmt.Errorf("Analyze: %w", err)
 				CloseTransaction(txID)
 				return
@@ -654,7 +654,7 @@ func TestReload(t *testing.T) {
 	txID := generateRandomID()
 	InitTransaction(txID)
 	defer CloseTransaction(txID)
-	if err := Analyze("Everything", txID, waceapi.HTTPPayload{URI: "/test"}, []string{"param"}); err != nil {
+	if err := Analyze(configstore.Everything, txID, waceapi.HTTPPayload{URI: "/test"}, []string{"param"}); err != nil {
 		t.Fatalf("Analyze after Reload: %v", err)
 	}
 	if _, _, err := CheckTransaction(txID, []string{"simple"}, waceapi.WAFData{}); err != nil {
@@ -674,7 +674,7 @@ func BenchmarkTrivial(b *testing.B) {
 		transactionId := strconv.Itoa(i)
 		InitTransaction(transactionId)
 
-		Analyze("RequestHeaders", transactionId, waceapi.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
+		Analyze(configstore.RequestHeaders, transactionId, waceapi.HTTPPayload{URI: "Request line and headers\n"}, []string{"trivial", "trivial2"})
 
 		_, _, err := CheckTransaction(transactionId, []string{"simple"}, wafParams)
 		if err != nil {
@@ -822,7 +822,7 @@ func TestAnalyzeAsync(t *testing.T) {
 
 	txID := generateRandomID()
 	InitTransaction(txID)
-	if err := Analyze("RequestHeaders", txID, requestHeadersPayload, []string{"trivial", "trivial2"}); err != nil {
+	if err := Analyze(configstore.RequestHeaders, txID, requestHeadersPayload, []string{"trivial", "trivial2"}); err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
 	if _, _, err := CheckTransaction(txID, []string{"simple"}, waceapi.WAFData{}); err != nil {
@@ -870,7 +870,7 @@ decision_plugins:
 	defer CloseTransaction(txID)
 	// larger than the default max_payload of the server (1MB)
 	payload := waceapi.HTTPPayload{RequestBody: strings.Repeat("a", 2<<20)}
-	if err := Analyze("RequestBody", txID, payload, []string{"remote"}); err != nil {
+	if err := Analyze(configstore.RequestBody, txID, payload, []string{"remote"}); err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
 	// Analyze waits for the model plugins in the background: the
