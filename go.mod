@@ -1,6 +1,6 @@
 module github.com/tilsor/ModSecIntl_wace_lib
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/magefile/mage v1.17.2
